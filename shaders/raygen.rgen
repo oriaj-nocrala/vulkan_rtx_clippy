@@ -1,0 +1,276 @@
+// Advanced Ray Generation Shader - Full RTX Implementation
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
+layout(binding = 1, set = 0, rgba16f) uniform image2D image;
+layout(binding = 2, set = 0, rgba16f) uniform image2D accumulationBuffer;
+
+layout(binding = 3, set = 0) uniform CameraProperties {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+    mat4 viewInverse;
+    mat4 projInverse;
+    vec3 cameraPos;
+    float time;
+    float metallic;
+    float roughness;
+    int rtxEnabled;
+    vec2 mousePos;
+    vec2 resolution;
+    float glowIntensity;
+    int frameCount;
+    int maxBounces;
+    int samplesPerPixel;
+} cam;
+
+layout(location = 0) rayPayloadEXT vec3 hitValue;
+layout(location = 1) rayPayloadEXT vec3 reflectionValue;
+
+// Advanced random number generation
+uint rngState;
+
+uint wang_hash(uint seed) {
+    seed = (seed ^ 61u) ^ (seed >> 16u);
+    seed *= 9u;
+    seed = seed ^ (seed >> 4u);
+    seed *= 0x27d4eb2du;
+    seed = seed ^ (seed >> 15u);
+    return seed;
+}
+
+float rnd() {
+    rngState = wang_hash(rngState);
+    return float(rngState) / 4294967296.0;
+}
+
+vec2 rnd2() {
+    return vec2(rnd(), rnd());
+}
+
+// Sample hemisphere for global illumination
+vec3 cosineWeightedSample(vec3 normal) {
+    vec2 r = rnd2();
+    float phi = 2.0 * 3.14159265359 * r.x;
+    float cosTheta = sqrt(r.y);
+    float sinTheta = sqrt(1.0 - r.y);
+    
+    vec3 w = normal;
+    vec3 u = normalize(cross((abs(w.x) > 0.1 ? vec3(0, 1, 0) : vec3(1, 0, 0)), w));
+    vec3 v = cross(w, u);
+    
+    return normalize(u * cos(phi) * sinTheta + v * sin(phi) * sinTheta + w * cosTheta);
+}
+
+// Advanced ACES tone mapping
+vec3 acesToneMapping(vec3 color) {
+    const float A = 2.51;
+    const float B = 0.03;
+    const float C = 2.43;
+    const float D = 0.59;
+    const float E = 0.14;
+    
+    return (color * (A * color + B)) / (color * (C * color + D) + E);
+}
+
+// Temporal anti-aliasing jitter
+vec2 getJitter() {
+    uint pixelIndex = gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x;
+    uint seed = pixelIndex + cam.frameCount * 0x9e3779b9u;
+    
+    rngState = wang_hash(seed);
+    return (rnd2() - 0.5) / vec2(gl_LaunchSizeEXT.xy);
+}
+
+// Depth of field effect
+vec3 getDOFRayDirection(vec3 rayDir, vec3 rayOrigin) {
+    float aperture = 0.05;
+    float focalDistance = 6.0;
+    
+    // Focus point
+    vec3 focusPoint = rayOrigin + rayDir * focalDistance;
+    
+    // Aperture disk sampling
+    vec2 apertureSample = rnd2();
+    float angle = apertureSample.x * 2.0 * 3.14159265359;
+    float radius = sqrt(apertureSample.y) * aperture;
+    
+    vec3 apertureOffset = vec3(cos(angle) * radius, sin(angle) * radius, 0.0);
+    vec3 newOrigin = rayOrigin + apertureOffset;
+    vec3 newDirection = normalize(focusPoint - newOrigin);
+    
+    return newDirection;
+}
+
+// Motion blur effect
+vec3 getMotionBlurredPosition(vec3 worldPos) {
+    float motionBlurStrength = 0.02;
+    float timeOffset = (rnd() - 0.5) * motionBlurStrength;
+    float motionTime = cam.time + timeOffset;
+    
+    // Apply same motion as vertex shader
+    vec3 motionPos = worldPos;
+    float wave1 = sin(motionTime * 2.0 + worldPos.y * 3.0) * 0.05;
+    float wave2 = sin(motionTime * 1.5 + worldPos.x * 2.0) * 0.03;
+    float wave3 = cos(motionTime * 3.0 + worldPos.z * 4.0) * 0.02;
+    
+    motionPos.x += wave1 + wave2;
+    motionPos.y += wave3;
+    motionPos.z += wave1 * 0.5 + wave2 * 0.3;
+    
+    return motionPos;
+}
+
+void main() {
+    const ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    const vec2 pixelCenter = vec2(pixel) + vec2(0.5);
+    
+    // Temporal accumulation
+    vec3 accumulatedColor = vec3(0.0);
+    int samples = cam.rtxEnabled == 1 ? cam.samplesPerPixel : 1;
+    
+    for(int s = 0; s < samples; s++) {
+        // Jitter for anti-aliasing
+        vec2 jitter = getJitter();
+        const vec2 inUV = (pixelCenter + jitter) / vec2(gl_LaunchSizeEXT.xy);
+        vec2 d = inUV * 2.0 - 1.0;
+        
+        // Generate camera ray
+        vec4 origin = cam.viewInverse * vec4(0, 0, 0, 1);
+        vec4 target = cam.projInverse * vec4(d.x, d.y, 1, 1);
+        vec3 direction = normalize((cam.viewInverse * vec4(normalize(target.xyz), 0)).xyz);
+        
+        // Apply depth of field
+        if (cam.rtxEnabled == 1) {
+            direction = getDOFRayDirection(direction, origin.xyz);
+        }
+        
+        // Primary ray
+        uint rayFlags = gl_RayFlagsOpaqueEXT;
+        float tMin = 0.001;
+        float tMax = 1000.0;
+        
+        traceRayEXT(topLevelAS, rayFlags, 0xff, 0, 0, 0, origin.xyz, tMin, direction, tMax, 0);
+        
+        vec3 primaryColor = hitValue;
+        vec3 sampleColor = primaryColor;
+        
+        // Advanced RTX effects
+        if (cam.rtxEnabled == 1) {
+            // Multiple bounce reflections
+            vec3 rayOrigin = origin.xyz;
+            vec3 rayDir = direction;
+            vec3 throughput = vec3(1.0);
+            
+            for(int bounce = 0; bounce < cam.maxBounces && any(greaterThan(throughput, vec3(0.01))); bounce++) {
+                traceRayEXT(topLevelAS, rayFlags, 0xff, 1, 0, 1, rayOrigin, tMin, rayDir, tMax, 1);
+                
+                vec3 bounceColor = reflectionValue;
+                sampleColor += bounceColor * throughput * 0.3;
+                
+                // Russian roulette path termination
+                float maxThroughput = max(throughput.r, max(throughput.g, throughput.b));
+                if(rnd() > maxThroughput) break;
+                
+                throughput /= maxThroughput;
+                throughput *= 0.8; // Energy conservation
+            }
+            
+            // Global illumination sampling
+            vec3 giColor = vec3(0.0);
+            const int giSamples = 4;
+            
+            for(int gi = 0; gi < giSamples; gi++) {
+                vec3 randomDir = cosineWeightedSample(direction);
+                traceRayEXT(topLevelAS, rayFlags, 0xff, 0, 0, 0, origin.xyz, tMin, randomDir, tMax, 0);
+                giColor += hitValue / float(giSamples);
+            }
+            
+            sampleColor += giColor * 0.2;
+            
+            // Volumetric lighting
+            vec3 volumetricColor = vec3(0.0);
+            const int volumetricSamples = 8;
+            
+            for(int vol = 0; vol < volumetricSamples; vol++) {
+                float t = float(vol) / float(volumetricSamples);
+                vec3 samplePos = origin.xyz + direction * t * 10.0;
+                
+                // Sample light at position
+                vec3 lightPos = vec3(sin(cam.time) * 5.0, 5.0, cos(cam.time) * 5.0);
+                vec3 lightDir = normalize(lightPos - samplePos);
+                float lightDist = length(lightPos - samplePos);
+                float attenuation = 1.0 / (1.0 + lightDist * lightDist * 0.1);
+                
+                // Check for occlusion (simplified)
+                float occlusion = 1.0 - t * 0.1;
+                volumetricColor += vec3(1.0, 0.8, 0.3) * attenuation * occlusion * 0.02;
+            }
+            
+            sampleColor += volumetricColor;
+            
+            // Lens effects
+            vec2 lensUV = inUV - 0.5;
+            float lensDistortion = length(lensUV);
+            
+            // Chromatic aberration
+            float aberrationStrength = lensDistortion * 0.01;
+            sampleColor.r *= 1.0 + aberrationStrength;
+            sampleColor.b *= 1.0 - aberrationStrength;
+            
+            // Vignette
+            float vignette = 1.0 - lensDistortion * lensDistortion;
+            sampleColor *= vignette;
+            
+            // Bloom effect
+            float luminance = dot(sampleColor, vec3(0.299, 0.587, 0.114));
+            if (luminance > 1.0) {
+                vec3 bloomColor = sampleColor * (luminance - 1.0) * 0.5;
+                sampleColor += bloomColor;
+            }
+        }
+        
+        accumulatedColor += sampleColor;
+    }
+    
+    accumulatedColor /= float(samples);
+    
+    // Temporal accumulation with previous frames
+    vec3 previousColor = imageLoad(accumulationBuffer, pixel).rgb;
+    float blendFactor = 1.0 / min(float(cam.frameCount + 1), 60.0);
+    vec3 finalColor = mix(previousColor, accumulatedColor, blendFactor);
+    
+    // Store accumulated color
+    imageStore(accumulationBuffer, pixel, vec4(finalColor, 1.0));
+    
+    // Post-processing effects
+    if (cam.rtxEnabled == 1) {
+        // Advanced tone mapping
+        finalColor = acesToneMapping(finalColor);
+        
+        // Exposure adjustment
+        finalColor *= 1.2;
+        
+        // Color grading
+        finalColor.r = pow(finalColor.r, 0.9);
+        finalColor.g = pow(finalColor.g, 0.95);
+        finalColor.b = pow(finalColor.b, 1.05);
+        
+        // Film grain
+        vec2 filmGrainUV = vec2(pixel) / 256.0 + cam.time * 0.1;
+        float grain = (rnd() - 0.5) * 0.02;
+        finalColor += vec3(grain);
+        
+        // Scanlines effect
+        float scanline = sin(float(pixel.y) * 0.5 + cam.time * 2.0) * 0.005;
+        finalColor += vec3(0.0, scanline, scanline * 0.5);
+    }
+    
+    // Gamma correction
+    finalColor = pow(finalColor, vec3(1.0/2.2));
+    
+    // Output final color
+    imageStore(image, pixel, vec4(finalColor, 1.0));
+}
