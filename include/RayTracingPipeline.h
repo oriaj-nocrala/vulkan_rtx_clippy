@@ -20,7 +20,7 @@ public:
     
     VkAccelerationStructureKHR getTopLevelAS() const { return topLevelAS; }
     
-    void traceRays(VkCommandBuffer commandBuffer, uint32_t width, uint32_t height);
+    void traceRays(VkCommandBuffer commandBuffer, uint32_t width, uint32_t height, VkDescriptorSet descriptorSet);
     
 private:
     VkDevice device;

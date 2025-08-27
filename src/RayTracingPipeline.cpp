@@ -486,18 +486,110 @@ void RayTracingPipeline::createAccelerationStructures(VkBuffer vertexBuffer, VkB
 }
 
 void RayTracingPipeline::createShaderBindingTable() {
-    // Simple placeholder for now
-    raygenRegion = {};
-    missRegion = {};  
-    hitRegion = {};
+    std::cout << "Creating REAL Shader Binding Table with actual handles!" << std::endl;
+    
+    // Get RT pipeline properties
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtPipelineProps{};
+    rtPipelineProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+    
+    VkPhysicalDeviceProperties2 deviceProps{};
+    deviceProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    deviceProps.pNext = &rtPipelineProps;
+    vkGetPhysicalDeviceProperties2(physicalDevice, &deviceProps);
+    
+    const uint32_t handleSize = rtPipelineProps.shaderGroupHandleSize;
+    const uint32_t handleAlignment = rtPipelineProps.shaderGroupHandleAlignment;
+    const uint32_t numGroups = 4; // raygen, miss, shadowMiss, hitGroup
+    
+    std::cout << "   - Handle size: " << handleSize << " bytes" << std::endl;
+    std::cout << "   - Handle alignment: " << handleAlignment << " bytes" << std::endl;
+    std::cout << "   - Number of groups: " << numGroups << std::endl;
+    
+    // Get shader handles from pipeline
+    const uint32_t sbtSize = numGroups * handleSize;
+    std::vector<uint8_t> shaderHandleStorage(sbtSize);
+    VkResult result = vkGetRayTracingShaderGroupHandlesKHR(device, pipeline, 0, numGroups, 
+                                                           sbtSize, shaderHandleStorage.data());
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error("Failed to get ray tracing shader group handles");
+    }
+    
+    std::cout << "✅ Retrieved " << numGroups << " real shader handles (" << sbtSize << " bytes total)" << std::endl;
+    
+    // Calculate aligned sizes for SBT regions
+    const uint32_t alignedHandleSize = (handleSize + handleAlignment - 1) & ~(handleAlignment - 1);
+    
+    // Create SBT buffer  
+    const uint32_t totalSbtSize = alignedHandleSize * numGroups;
+    VulkanHelpers::createBuffer(device, physicalDevice, totalSbtSize,
+                               VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                               shaderBindingTableBuffer, shaderBindingTableMemory);
+    
+    // Upload shader handles to SBT buffer
+    void* mappedSBT;
+    vkMapMemory(device, shaderBindingTableMemory, 0, totalSbtSize, 0, &mappedSBT);
+    
+    uint8_t* sbtData = reinterpret_cast<uint8_t*>(mappedSBT);
+    for (uint32_t i = 0; i < numGroups; i++) {
+        memcpy(sbtData + i * alignedHandleSize, 
+               shaderHandleStorage.data() + i * handleSize, handleSize);
+    }
+    
+    vkUnmapMemory(device, shaderBindingTableMemory);
+    
+    // Setup SBT regions with real addresses
+    VkDeviceAddress sbtAddress = getBufferDeviceAddress(shaderBindingTableBuffer);
+    
+    // Raygen region (Group 0)
+    raygenRegion.deviceAddress = sbtAddress;
+    raygenRegion.stride = alignedHandleSize;
+    raygenRegion.size = alignedHandleSize;
+    
+    // Miss region (Groups 1-2: miss + shadowMiss)
+    missRegion.deviceAddress = sbtAddress + alignedHandleSize;
+    missRegion.stride = alignedHandleSize;
+    missRegion.size = alignedHandleSize * 2;
+    
+    // Hit region (Group 3)
+    hitRegion.deviceAddress = sbtAddress + alignedHandleSize * 3;
+    hitRegion.stride = alignedHandleSize;
+    hitRegion.size = alignedHandleSize;
+    
+    // Callable region (unused for now)
     callableRegion = {};
     
-    std::cout << "Shader Binding Table created (simple placeholder)" << std::endl;
+    std::cout << "🚀 ✅ REAL SHADER BINDING TABLE CREATED!" << std::endl;
+    std::cout << "   - SBT buffer: " << totalSbtSize << " bytes at 0x" << std::hex << sbtAddress << std::dec << std::endl;
+    std::cout << "   - Raygen region: 0x" << std::hex << raygenRegion.deviceAddress << std::dec << std::endl;
+    std::cout << "   - Miss region: 0x" << std::hex << missRegion.deviceAddress << std::dec << std::endl;
+    std::cout << "   - Hit region: 0x" << std::hex << hitRegion.deviceAddress << std::dec << std::endl;
 }
 
-void RayTracingPipeline::traceRays(VkCommandBuffer commandBuffer, uint32_t width, uint32_t height) {
-    // Safe placeholder
-    std::cout << "RTX Ray Tracing executed (safe placeholder)" << std::endl;
+void RayTracingPipeline::traceRays(VkCommandBuffer commandBuffer, uint32_t width, uint32_t height, VkDescriptorSet descriptorSet) {
+    std::cout << "🔥 EXECUTING REAL RAY TRACING DISPATCH WITH TLAS! 🔥" << std::endl;
+    std::cout << "   - Resolution: " << width << "x" << height << std::endl;
+    std::cout << "   - Using TLAS: 0x" << std::hex << getAccelerationStructureDeviceAddress(topLevelAS) << std::dec << std::endl;
+    
+    // Bind ray tracing pipeline
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline);
+    
+    // CRITICAL: Bind descriptor set with TLAS!
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, 
+                           pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+    
+    std::cout << "✅ Descriptor set bound with TLAS!" << std::endl;
+    
+    // REAL RAY TRACING DISPATCH WITH OUR ACCELERATION STRUCTURES!
+    vkCmdTraceRaysKHR(commandBuffer,
+                      &raygenRegion,   // Raygen shader region
+                      &missRegion,     // Miss shader region  
+                      &hitRegion,      // Hit group region
+                      &callableRegion, // Callable region (unused)
+                      width, height, 1);
+    
+    std::cout << "⚡ vkCmdTraceRaysKHR dispatched with real TLAS and descriptor set!" << std::endl;
+    std::cout << "🎯 Tracing " << (width * height) << " rays through Clippy geometry!" << std::endl;
 }
 
 VkCommandBuffer RayTracingPipeline::beginSingleTimeCommands() {

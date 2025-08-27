@@ -166,6 +166,7 @@ private:
     // Ray Tracing
     bool checkRayTracingSupport();
     void setupRayTracing();
+    void updateDescriptorSetsWithTLAS();
     
     // UI System
     void setupUI();

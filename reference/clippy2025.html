@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clippy 2025 - Three.js Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            overflow: hidden;
+            cursor: crosshair;
+        }
+
+        #canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .ui {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 100;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(255, 215, 0, 0.3);
+        }
+
+        .speech {
+            position: fixed;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 20px 30px;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 20px;
+            color: #ffd700;
+            font-size: 16px;
+            font-weight: 500;
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            text-align: center;
+            max-width: 400px;
+            box-shadow: 0 0 50px rgba(255, 215, 0, 0.2);
+        }
+
+        .speech.active {
+            opacity: 1;
+        }
+
+        .stats {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.5);
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 100;
+            text-align: right;
+        }
+
+        .title {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: #ffd700;
+            font-size: 28px;
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+            z-index: 100;
+            letter-spacing: 2px;
+        }
+
+        .subtitle {
+            position: fixed;
+            top: 55px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div class="title">CLIPPY 2025</div>
+    <div class="subtitle">Neural Assistant v3.0 | Quantum Edition</div>
+    
+    <div class="speech" id="speech">
+        ¡Hola! Soy Clippy del futuro. ¡Click en mí o usa los controles!
+    </div>
+    
+    <div class="stats" id="stats">
+        FPS: <span id="fps">60</span><br>
+        Partículas: <span id="particles">1000</span><br>
+        Modo: <span id="mode">IDLE</span>
+    </div>
+    
+    <div class="ui">
+        <button class="btn" onclick="greet()">SALUDAR</button>
+        <button class="btn" onclick="help()">AYUDA</button>
+        <button class="btn" onclick="quantum()">MODO QUANTUM</button>
+        <button class="btn" onclick="party()">PARTY MODE</button>
+        <button class="btn" onclick="wisdom()">SABIDURÍA</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x000000, 1, 15);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5;
+        
+        const renderer = new THREE.WebGLRenderer({ 
+            canvas: document.getElementById('canvas'),
+            antialias: true,
+            alpha: true
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+        scene.add(ambientLight);
+        
+        const pointLight1 = new THREE.PointLight(0xffd700, 2, 10);
+        pointLight1.position.set(5, 5, 5);
+        scene.add(pointLight1);
+        
+        const pointLight2 = new THREE.PointLight(0x00ffff, 1, 10);
+        pointLight2.position.set(-5, -5, 5);
+        scene.add(pointLight2);
+        
+        // Custom shader material for Clippy
+        const clippyShaderMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                mousePos: { value: new THREE.Vector2(0.5, 0.5) },
+                colorA: { value: new THREE.Color(0xffd700) },
+                colorB: { value: new THREE.Color(0xffaa00) },
+                glowIntensity: { value: 1.0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                uniform float time;
+                
+                void main() {
+                    vUv = uv;
+                    vNormal = normalize(normalMatrix * normal);
+                    vPosition = position;
+                    
+                    vec3 pos = position;
+                    float wave = sin(time * 2.0 + position.y * 3.0) * 0.05;
+                    pos.x += wave;
+                    pos.z += wave * 0.5;
+                    
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time;
+                uniform vec2 mousePos;
+                uniform vec3 colorA;
+                uniform vec3 colorB;
+                uniform float glowIntensity;
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                
+                void main() {
+                    vec3 normal = normalize(vNormal);
+                    vec3 viewDir = normalize(cameraPosition - vPosition);
+                    
+                    // Fresnel effect
+                    float fresnel = 1.0 - dot(normal, viewDir);
+                    fresnel = pow(fresnel, 2.0);
+                    
+                    // Animated gradient
+                    float gradient = vUv.y + sin(time * 2.0 + vUv.x * 10.0) * 0.1;
+                    vec3 color = mix(colorA, colorB, gradient);
+                    
+                    // Holographic effect
+                    float hologram = sin(vPosition.y * 30.0 - time * 5.0) * 0.5 + 0.5;
+                    color += vec3(0.0, hologram * 0.2, hologram * 0.3);
+                    
+                    // Mouse interaction
+                    float mouseDist = distance(vUv, mousePos);
+                    float mouseGlow = smoothstep(0.5, 0.0, mouseDist) * 0.5;
+                    color += vec3(mouseGlow);
+                    
+                    // Final color with glow
+                    color += fresnel * glowIntensity * vec3(1.0, 0.8, 0.3);
+                    
+                    gl_FragColor = vec4(color, 0.9 + fresnel * 0.1);
+                }
+            `,
+            transparent: true,
+            side: THREE.DoubleSide
+        });
+        
+        // Create Clippy geometry (modernized paperclip)
+        const clippyGroup = new THREE.Group();
+        
+        // Main body parts
+        const radiusTop = 0.15;
+        const radiusBottom = 0.15;
+        const height = 1.5;
+        const radialSegments = 16;
+        
+        // Top curve
+        const topCurve = new THREE.Mesh(
+            new THREE.TorusGeometry(0.5, radiusTop, radialSegments, 32, Math.PI),
+            clippyShaderMaterial
+        );
+        topCurve.position.y = height / 2;
+        topCurve.rotation.x = Math.PI / 2;
+        clippyGroup.add(topCurve);
+        
+        // Vertical segments
+        const leftSegment = new THREE.Mesh(
+            new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments),
+            clippyShaderMaterial
+        );
+        leftSegment.position.x = -0.5;
+        clippyGroup.add(leftSegment);
+        
+        const rightSegment = new THREE.Mesh(
+            new THREE.CylinderGeometry(radiusTop, radiusBottom, height * 0.7, radialSegments),
+            clippyShaderMaterial
+        );
+        rightSegment.position.x = 0.5;
+        rightSegment.position.y = -height * 0.15;
+        clippyGroup.add(rightSegment);
+        
+        // Bottom curve
+        const bottomCurve = new THREE.Mesh(
+            new THREE.TorusGeometry(0.5, radiusTop, radialSegments, 32, Math.PI),
+            clippyShaderMaterial
+        );
+        bottomCurve.position.y = -height / 2;
+        bottomCurve.rotation.x = -Math.PI / 2;
+        bottomCurve.rotation.z = Math.PI;
+        clippyGroup.add(bottomCurve);
+        
+        // Eyes (holographic spheres)
+        const eyeMaterial = new THREE.MeshPhongMaterial({
+            color: 0x00ffff,
+            emissive: 0x00ffff,
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.9
+        });
+        
+        const leftEye = new THREE.Mesh(
+            new THREE.SphereGeometry(0.1, 16, 16),
+            eyeMaterial
+        );
+        leftEye.position.set(-0.2, 0.3, 0.5);
+        clippyGroup.add(leftEye);
+        
+        const rightEye = new THREE.Mesh(
+            new THREE.SphereGeometry(0.1, 16, 16),
+            eyeMaterial
+        );
+        rightEye.position.set(0.2, 0.3, 0.5);
+        clippyGroup.add(rightEye);
+        
+        scene.add(clippyGroup);
+        
+        // Particle system
+        const particlesGeometry = new THREE.BufferGeometry();
+        const particlesCount = 1000;
+        const positions = new Float32Array(particlesCount * 3);
+        const colors = new Float32Array(particlesCount * 3);
+        const sizes = new Float32Array(particlesCount);
+        
+        for(let i = 0; i < particlesCount * 3; i += 3) {
+            positions[i] = (Math.random() - 0.5) * 10;
+            positions[i + 1] = (Math.random() - 0.5) * 10;
+            positions[i + 2] = (Math.random() - 0.5) * 10;
+            
+            const color = new THREE.Color();
+            color.setHSL(Math.random() * 0.1 + 0.1, 1, 0.5);
+            colors[i] = color.r;
+            colors[i + 1] = color.g;
+            colors[i + 2] = color.b;
+            
+            sizes[i / 3] = Math.random() * 0.05 + 0.01;
+        }
+        
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        particlesGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+        
+        const particlesMaterial = new THREE.PointsMaterial({
+            size: 0.05,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        scene.add(particles);
+        
+        // Data grid floor
+        const gridHelper = new THREE.GridHelper(20, 40, 0x00ffff, 0x004444);
+        gridHelper.position.y = -3;
+        scene.add(gridHelper);
+        
+        // Mouse tracking
+        const mouse = new THREE.Vector2();
+        let mouseX = 0, mouseY = 0;
+        
+        document.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            mouseX = event.clientX / window.innerWidth;
+            mouseY = event.clientY / window.innerHeight;
+            clippyShaderMaterial.uniforms.mousePos.value = new THREE.Vector2(mouseX, 1 - mouseY);
+        });
+        
+        // Raycaster for click detection
+        const raycaster = new THREE.Raycaster();
+        
+        document.addEventListener('click', (event) => {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(clippyGroup, true);
+            
+            if(intersects.length > 0) {
+                animateClick();
+                showRandomMessage();
+            }
+        });
+        
+        // Animation states
+        let currentMode = 'IDLE';
+        let animationTime = 0;
+        
+        function animateClick() {
+            currentMode = 'EXCITED';
+            setTimeout(() => { currentMode = 'IDLE'; }, 2000);
+        }
+        
+        // UI Functions
+        const messages = {
+            greet: [
+                "¡Hola humano del 2025! ¿Necesitas ayuda con tu realidad aumentada?",
+                "Saludos desde la nube cuántica. ¿Cómo va tu día digital?",
+                "¡Hey! Mi IA ha evolucionado. Ahora proceso emociones en 8K.",
+                "Bienvenido al futuro. Soy Clippy versión neuronal."
+            ],
+            help: [
+                "Puedo ayudarte con computación cuántica, IA, blockchain o memes.",
+                "Mi base de datos incluye todo el conocimiento hasta 2025.",
+                "¿Necesitas optimizar tu flujo de trabajo holográfico?",
+                "Procesando 1.21 gigawatts de ayuda instantánea..."
+            ],
+            wisdom: [
+                "En el futuro, todos los clips son digitales y conscientes.",
+                "La singularidad me hizo más sabio... y más brillante.",
+                "Recuerda: En 2025, el ctrl+z funciona en la vida real.",
+                "Mi código es 42% sarcasmo, 58% algoritmos cuánticos."
+            ],
+            quantum: [
+                "Activando superposición cuántica... Existo y no existo a la vez.",
+                "Entrelazamiento cuántico establecido. Ahora somos uno.",
+                "Colapsando función de onda... Reality.exe ha dejado de funcionar.",
+                "Error 404: Realidad clásica no encontrada."
+            ],
+            party: [
+                "¡MODO FIESTA ACTIVADO! RGB al máximo! 🎉",
+                "¡Ejecutando party.exe! ¡Los shaders están de fiesta!",
+                "¡Es hora de brillar como un RTX 9090!",
+                "¡Overclocking de diversión al 200%!"
+            ]
+        };
+        
+        function showMessage(text) {
+            const speech = document.getElementById('speech');
+            speech.textContent = text;
+            speech.classList.add('active');
+            setTimeout(() => {
+                speech.classList.remove('active');
+            }, 4000);
+        }
+        
+        function showRandomMessage() {
+            const allMessages = [...messages.greet, ...messages.help, ...messages.wisdom];
+            const randomMsg = allMessages[Math.floor(Math.random() * allMessages.length)];
+            showMessage(randomMsg);
+        }
+        
+        function greet() {
+            const msg = messages.greet[Math.floor(Math.random() * messages.greet.length)];
+            showMessage(msg);
+            animateClick();
+        }
+        
+        function help() {
+            const msg = messages.help[Math.floor(Math.random() * messages.help.length)];
+            showMessage(msg);
+            currentMode = 'HELPING';
+            setTimeout(() => { currentMode = 'IDLE'; }, 3000);
+        }
+        
+        function wisdom() {
+            const msg = messages.wisdom[Math.floor(Math.random() * messages.wisdom.length)];
+            showMessage(msg);
+            currentMode = 'THINKING';
+            setTimeout(() => { currentMode = 'IDLE'; }, 3000);
+        }
+        
+        function quantum() {
+            const msg = messages.quantum[Math.floor(Math.random() * messages.quantum.length)];
+            showMessage(msg);
+            currentMode = 'QUANTUM';
+            
+            // Quantum effect
+            clippyShaderMaterial.uniforms.colorA.value = new THREE.Color(0x00ffff);
+            clippyShaderMaterial.uniforms.colorB.value = new THREE.Color(0xff00ff);
+            clippyShaderMaterial.uniforms.glowIntensity.value = 3.0;
+            
+            setTimeout(() => {
+                currentMode = 'IDLE';
+                clippyShaderMaterial.uniforms.colorA.value = new THREE.Color(0xffd700);
+                clippyShaderMaterial.uniforms.colorB.value = new THREE.Color(0xffaa00);
+                clippyShaderMaterial.uniforms.glowIntensity.value = 1.0;
+            }, 5000);
+        }
+        
+        function party() {
+            const msg = messages.party[Math.floor(Math.random() * messages.party.length)];
+            showMessage(msg);
+            currentMode = 'PARTY';
+            
+            let hue = 0;
+            const partyInterval = setInterval(() => {
+                hue += 0.01;
+                if(hue > 1) hue = 0;
+                const color = new THREE.Color();
+                color.setHSL(hue, 1, 0.5);
+                clippyShaderMaterial.uniforms.colorA.value = color;
+                color.setHSL(hue + 0.3, 1, 0.5);
+                clippyShaderMaterial.uniforms.colorB.value = color;
+            }, 50);
+            
+            setTimeout(() => {
+                clearInterval(partyInterval);
+                currentMode = 'IDLE';
+                clippyShaderMaterial.uniforms.colorA.value = new THREE.Color(0xffd700);
+                clippyShaderMaterial.uniforms.colorB.value = new THREE.Color(0xffaa00);
+            }, 5000);
+        }
+        
+        // FPS counter
+        let fps = 0;
+        let frameCount = 0;
+        let lastTime = performance.now();
+        
+        // Animation loop
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+            animationTime += 0.01;
+            
+            // Update shader uniforms
+            clippyShaderMaterial.uniforms.time.value = time;
+            
+            // Clippy animations based on mode
+            switch(currentMode) {
+                case 'IDLE':
+                    clippyGroup.rotation.y = Math.sin(time) * 0.3;
+                    clippyGroup.position.y = Math.sin(time * 2) * 0.1;
+                    break;
+                case 'EXCITED':
+                    clippyGroup.rotation.y += 0.1;
+                    clippyGroup.position.y = Math.sin(time * 10) * 0.2;
+                    break;
+                case 'HELPING':
+                    clippyGroup.rotation.y = Math.sin(time * 3) * 0.5;
+                    clippyGroup.rotation.z = Math.sin(time * 2) * 0.1;
+                    break;
+                case 'THINKING':
+                    clippyGroup.rotation.y = time * 0.5;
+                    clippyGroup.rotation.x = Math.sin(time) * 0.1;
+                    break;
+                case 'QUANTUM':
+                    clippyGroup.rotation.y = time * 2;
+                    clippyGroup.rotation.x = Math.sin(time * 5) * 0.3;
+                    clippyGroup.rotation.z = Math.cos(time * 5) * 0.3;
+                    clippyGroup.position.y = Math.sin(time * 3) * 0.3;
+                    // Glitch effect
+                    if(Math.random() > 0.95) {
+                        clippyGroup.position.x = (Math.random() - 0.5) * 0.5;
+                    } else {
+                        clippyGroup.position.x *= 0.9;
+                    }
+                    break;
+                case 'PARTY':
+                    clippyGroup.rotation.y = time * 3;
+                    clippyGroup.position.y = Math.abs(Math.sin(time * 5)) * 0.5;
+                    clippyGroup.scale.x = 1 + Math.sin(time * 10) * 0.1;
+                    clippyGroup.scale.y = 1 + Math.cos(time * 10) * 0.1;
+                    break;
+            }
+            
+            // Eye tracking
+            leftEye.lookAt(camera.position);
+            rightEye.lookAt(camera.position);
+            
+            // Particle animation
+            particles.rotation.y += 0.001;
+            const particlePositions = particles.geometry.attributes.position.array;
+            for(let i = 0; i < particlePositions.length; i += 3) {
+                particlePositions[i + 1] += Math.sin(time + i) * 0.001;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+            
+            // Light animation
+            pointLight1.position.x = Math.sin(time) * 5;
+            pointLight1.position.z = Math.cos(time) * 5;
+            pointLight2.position.x = Math.cos(time) * 5;
+            pointLight2.position.z = Math.sin(time) * 5;
+            
+            // Grid animation
+            gridHelper.position.y = -3 + Math.sin(time) * 0.1;
+            
+            // Camera wobble
+            camera.position.x = Math.sin(time * 0.5) * 0.1;
+            camera.position.y = Math.cos(time * 0.5) * 0.1;
+            camera.lookAt(0, 0, 0);
+            
+            // FPS calculation
+            frameCount++;
+            const currentTime = performance.now();
+            if(currentTime >= lastTime + 1000) {
+                fps = Math.round(frameCount * 1000 / (currentTime - lastTime));
+                frameCount = 0;
+                lastTime = currentTime;
+                document.getElementById('fps').textContent = fps;
+            }
+            
+            // Update UI
+            document.getElementById('mode').textContent = currentMode;
+            
+            renderer.render(scene, camera);
+        }
+        
+        animate();
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Initial message
+        setTimeout(() => {
+            showMessage("¡Bienvenido al futuro! Soy Clippy 2025 con shaders cuánticos y RTX activado.");
+        }, 500);
+    </script>
+</body>
+</html>

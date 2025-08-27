@@ -5,17 +5,51 @@
 #include <array>
 #include <stdexcept>
 #include <cstring>
+#include <iostream>
 
 // Descriptor Set Layout Implementation
 void ClippyRTXApp::createDescriptorSetLayout() {
+    std::cout << "Creating descriptor set layout with TLAS support..." << std::endl;
+    
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
+    
+    // Binding 0: TLAS for ray tracing (NEW!)
+    VkDescriptorSetLayoutBinding tlasLayoutBinding{};
+    tlasLayoutBinding.binding = 0;
+    tlasLayoutBinding.descriptorCount = 1;
+    tlasLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    tlasLayoutBinding.pImmutableSamplers = nullptr;
+    tlasLayoutBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    bindings.push_back(tlasLayoutBinding);
+    
+    // Binding 1: Ray tracing output image (NEW!)
+    VkDescriptorSetLayoutBinding imageLayoutBinding{};
+    imageLayoutBinding.binding = 1;
+    imageLayoutBinding.descriptorCount = 1;
+    imageLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    imageLayoutBinding.pImmutableSamplers = nullptr;
+    imageLayoutBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    bindings.push_back(imageLayoutBinding);
+    
+    // Binding 2: Accumulation buffer (NEW!)
+    VkDescriptorSetLayoutBinding accumulationLayoutBinding{};
+    accumulationLayoutBinding.binding = 2;
+    accumulationLayoutBinding.descriptorCount = 1;
+    accumulationLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    accumulationLayoutBinding.pImmutableSamplers = nullptr;
+    accumulationLayoutBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    bindings.push_back(accumulationLayoutBinding);
+    
+    // Binding 3: Camera uniform buffer (MOVED from binding 0)
     VkDescriptorSetLayoutBinding uboLayoutBinding{};
-    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.binding = 3;
     uboLayoutBinding.descriptorCount = 1;
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboLayoutBinding.pImmutableSamplers = nullptr;
-    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | 
+                                 VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    bindings.push_back(uboLayoutBinding);
     
-    std::array<VkDescriptorSetLayoutBinding, 1> bindings = {uboLayoutBinding};
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -24,6 +58,12 @@ void ClippyRTXApp::createDescriptorSetLayout() {
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout!");
     }
+    
+    std::cout << "✅ Descriptor set layout created with " << bindings.size() << " bindings:" << std::endl;
+    std::cout << "   - Binding 0: TLAS (acceleration structure)" << std::endl;
+    std::cout << "   - Binding 1: Ray tracing output image" << std::endl;
+    std::cout << "   - Binding 2: Accumulation buffer" << std::endl;
+    std::cout << "   - Binding 3: Camera uniform buffer" << std::endl;
 }
 
 // Graphics Pipeline Implementation
@@ -327,9 +367,10 @@ void ClippyRTXApp::createDescriptorSets() {
         
         std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
         
+        // Only bind uniform buffer to binding 3 now (for ray tracing compatibility)
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = descriptorSets[i];
-        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstBinding = 3;  // Changed from 0 to 3 for ray tracing
         descriptorWrites[0].dstArrayElement = 0;
         descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[0].descriptorCount = 1;
@@ -337,6 +378,51 @@ void ClippyRTXApp::createDescriptorSets() {
         
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
+    
+    std::cout << "✅ Descriptor sets created (uniform buffer only - TLAS will be added later)" << std::endl;
+}
+
+// Update Descriptor Sets with TLAS for Ray Tracing
+void ClippyRTXApp::updateDescriptorSetsWithTLAS() {
+    if (!rayTracingPipeline) {
+        std::cout << "❌ Cannot update descriptor sets - no ray tracing pipeline" << std::endl;
+        return;
+    }
+    
+    std::cout << "Updating descriptor sets with TLAS..." << std::endl;
+    VkAccelerationStructureKHR tlas = rayTracingPipeline->getTopLevelAS();
+    
+    if (tlas == VK_NULL_HANDLE) {
+        std::cout << "❌ TLAS is null - cannot bind to descriptor set" << std::endl;
+        return;
+    }
+    
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        // Binding 0: TLAS
+        VkWriteDescriptorSetAccelerationStructureKHR tlasDescriptor{};
+        tlasDescriptor.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        tlasDescriptor.accelerationStructureCount = 1;
+        tlasDescriptor.pAccelerationStructures = &tlas;
+        
+        VkWriteDescriptorSet tlasWrite{};
+        tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        tlasWrite.pNext = &tlasDescriptor;
+        tlasWrite.dstSet = descriptorSets[i];
+        tlasWrite.dstBinding = 0;
+        tlasWrite.dstArrayElement = 0;
+        tlasWrite.descriptorCount = 1;
+        tlasWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        
+        // TODO: Add bindings 1 and 2 (images) when needed
+        
+        std::array<VkWriteDescriptorSet, 1> descriptorWrites = {tlasWrite};
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), 
+                              descriptorWrites.data(), 0, nullptr);
+    }
+    
+    std::cout << "✅ Descriptor sets updated with TLAS for " << MAX_FRAMES_IN_FLIGHT << " frames" << std::endl;
+    std::cout << "   - Binding 0: TLAS (acceleration structure)" << std::endl;
+    std::cout << "   - Binding 3: Uniform buffer (already bound)" << std::endl;
 }
 
 // Command Buffers Implementation

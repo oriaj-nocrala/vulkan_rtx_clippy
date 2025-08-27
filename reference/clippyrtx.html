@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clippy 2025 - RTX ON | Raytracing Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            overflow: hidden;
+            cursor: crosshair;
+        }
+
+        #canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .ui {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 100;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 90%;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(255, 215, 0, 0.3);
+        }
+
+        .btn.rtx-on {
+            background: linear-gradient(45deg, #00ff00, #00aa00);
+            border-color: #00ff00;
+            animation: pulse-glow 2s infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(0, 255, 0, 0.5); }
+            50% { box-shadow: 0 0 40px rgba(0, 255, 0, 0.8); }
+        }
+
+        .speech {
+            position: fixed;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 20px 30px;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 20px;
+            color: #ffd700;
+            font-size: 16px;
+            font-weight: 500;
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            text-align: center;
+            max-width: 400px;
+            box-shadow: 0 0 50px rgba(255, 215, 0, 0.2);
+        }
+
+        .speech.active {
+            opacity: 1;
+        }
+
+        .stats {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.8);
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 100;
+            text-align: right;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 0, 0.3);
+        }
+
+        .stats .rtx-indicator {
+            color: #00ff00;
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(0, 255, 0, 0.8);
+        }
+
+        .title {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: #ffd700;
+            font-size: 28px;
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+            z-index: 100;
+            letter-spacing: 2px;
+        }
+
+        .subtitle {
+            position: fixed;
+            top: 55px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+            z-index: 100;
+        }
+
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ff00;
+            font-size: 24px;
+            z-index: 200;
+            text-align: center;
+        }
+
+        .loading.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div class="loading" id="loading">
+        INICIANDO RTX...<br>
+        <span style="font-size: 14px;">Cargando cores de raytracing...</span>
+    </div>
+    
+    <div class="title">CLIPPY 2025</div>
+    <div class="subtitle">Neural Assistant v3.0 | RTX 4090 Ti Edition</div>
+    
+    <div class="speech" id="speech">
+        ¡RTX ON! Ahora con reflexiones en tiempo real y ray tracing.
+    </div>
+    
+    <div class="stats" id="stats">
+        FPS: <span id="fps">60</span><br>
+        Partículas: <span id="particles">2000</span><br>
+        Modo: <span id="mode">IDLE</span><br>
+        RTX: <span class="rtx-indicator" id="rtx-status">ON</span><br>
+        Rayos: <span id="rays">1M/s</span>
+    </div>
+    
+    <div class="ui">
+        <button class="btn rtx-on" onclick="toggleRTX()">RTX: ON</button>
+        <button class="btn" onclick="greet()">SALUDAR</button>
+        <button class="btn" onclick="help()">AYUDA</button>
+        <button class="btn" onclick="quantum()">QUANTUM</button>
+        <button class="btn" onclick="party()">PARTY</button>
+        <button class="btn" onclick="matrix()">MATRIX</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Hide loading after a moment
+        setTimeout(() => {
+            document.getElementById('loading').classList.add('hidden');
+        }, 2000);
+
+        // Scene setup with enhanced rendering
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000011, 0.1);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 6);
+        camera.lookAt(0, 0, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ 
+            canvas: document.getElementById('canvas'),
+            antialias: true,
+            alpha: false,
+            powerPreference: "high-performance"
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        
+        // RTX State
+        let rtxEnabled = true;
+        let rtxIntensity = 1.0;
+        
+        // Enhanced lighting setup for raytracing effect
+        const ambientLight = new THREE.AmbientLight(0x222244, 0.3);
+        scene.add(ambientLight);
+        
+        // Key light with shadows
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1);
+        keyLight.position.set(5, 10, 5);
+        keyLight.castShadow = true;
+        keyLight.shadow.mapSize.width = 2048;
+        keyLight.shadow.mapSize.height = 2048;
+        keyLight.shadow.camera.near = 0.1;
+        keyLight.shadow.camera.far = 50;
+        keyLight.shadow.camera.left = -10;
+        keyLight.shadow.camera.right = 10;
+        keyLight.shadow.camera.top = 10;
+        keyLight.shadow.camera.bottom = -10;
+        scene.add(keyLight);
+        
+        // Colored accent lights
+        const pointLight1 = new THREE.PointLight(0xffd700, 2, 20);
+        pointLight1.position.set(5, 5, 5);
+        pointLight1.castShadow = true;
+        scene.add(pointLight1);
+        
+        const pointLight2 = new THREE.PointLight(0x00ffff, 1.5, 20);
+        pointLight2.position.set(-5, -5, 5);
+        pointLight2.castShadow = true;
+        scene.add(pointLight2);
+        
+        const pointLight3 = new THREE.PointLight(0xff00ff, 1, 15);
+        pointLight3.position.set(0, 0, -5);
+        scene.add(pointLight3);
+        
+        // Area light for soft shadows (simulated)
+        const areaLight = new THREE.RectAreaLight(0xffffff, 2, 10, 10);
+        areaLight.position.set(0, 5, 0);
+        areaLight.lookAt(0, 0, 0);
+        scene.add(areaLight);
+        
+        // Custom raytracing shader material with enhanced reflections
+        const raytracingShader = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                mousePos: { value: new THREE.Vector2(0.5, 0.5) },
+                colorA: { value: new THREE.Color(0xffd700) },
+                colorB: { value: new THREE.Color(0xffaa00) },
+                glowIntensity: { value: 1.0 },
+                rtxEnabled: { value: 1.0 },
+                envMapIntensity: { value: 1.0 },
+                roughness: { value: 0.05 },
+                metalness: { value: 0.95 },
+                cameraPos: { value: camera.position },
+                resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                varying vec3 vWorldPosition;
+                varying vec3 vViewPosition;
+                varying vec3 vReflect;
+                uniform float time;
+                
+                void main() {
+                    vUv = uv;
+                    vNormal = normalize(normalMatrix * normal);
+                    vPosition = position;
+                    
+                    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                    vWorldPosition = worldPosition.xyz;
+                    
+                    vec4 viewPosition = viewMatrix * worldPosition;
+                    vViewPosition = viewPosition.xyz;
+                    
+                    // Calculate reflection vector for cube mapping
+                    vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
+                    vec3 viewDirection = normalize(worldPosition.xyz - cameraPosition);
+                    vReflect = reflect(viewDirection, worldNormal);
+                    
+                    vec3 pos = position;
+                    float wave = sin(time * 2.0 + position.y * 3.0) * 0.05;
+                    pos.x += wave;
+                    pos.z += wave * 0.5;
+                    
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time;
+                uniform vec2 mousePos;
+                uniform vec3 colorA;
+                uniform vec3 colorB;
+                uniform float glowIntensity;
+                uniform float rtxEnabled;
+                uniform float envMapIntensity;
+                uniform float roughness;
+                uniform float metalness;
+                uniform vec3 cameraPos;
+                uniform vec2 resolution;
+                
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                varying vec3 vWorldPosition;
+                varying vec3 vViewPosition;
+                varying vec3 vReflect;
+                
+                // Improved PBR functions
+                vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+                    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+                }
+                
+                vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
+                    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+                }   
+                
+                float DistributionGGX(vec3 N, vec3 H, float roughness) {
+                    float a = roughness * roughness;
+                    float a2 = a * a;
+                    float NdotH = max(dot(N, H), 0.0);
+                    float NdotH2 = NdotH * NdotH;
+                    
+                    float num = a2;
+                    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+                    denom = 3.14159265359 * denom * denom;
+                    
+                    return num / denom;
+                }
+                
+                float GeometrySchlickGGX(float NdotV, float roughness) {
+                    float r = (roughness + 1.0);
+                    float k = (r*r) / 8.0;
+                    
+                    float num = NdotV;
+                    float denom = NdotV * (1.0 - k) + k;
+                    
+                    return num / denom;
+                }
+                
+                float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+                    float NdotV = max(dot(N, V), 0.0);
+                    float NdotL = max(dot(N, L), 0.0);
+                    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+                    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+                    
+                    return ggx1 * ggx2;
+                }
+                
+                // Enhanced environment mapping
+                vec3 getEnvironmentColor(vec3 direction) {
+                    vec3 color = vec3(0.0);
+                    
+                    // Sky gradient
+                    float y = direction.y * 0.5 + 0.5;
+                    vec3 skyColor = mix(vec3(0.05, 0.05, 0.1), vec3(0.1, 0.15, 0.3), y);
+                    
+                    // Simulate ground reflection
+                    if(direction.y < 0.0) {
+                        float groundIntensity = abs(direction.y);
+                        skyColor = mix(skyColor, vec3(0.02, 0.02, 0.04), groundIntensity);
+                        
+                        // Grid pattern on ground
+                        float gridX = step(0.98, abs(sin(direction.x * 20.0)));
+                        float gridZ = step(0.98, abs(sin(direction.z * 20.0)));
+                        float grid = max(gridX, gridZ);
+                        skyColor += vec3(0.0, 0.5, 0.5) * grid * 0.2 * groundIntensity;
+                    }
+                    
+                    // Simulate light sources in environment
+                    vec3 light1Dir = normalize(vec3(sin(time), cos(time), 1.0));
+                    vec3 light2Dir = normalize(vec3(-cos(time * 0.8), sin(time * 0.8), 1.0));
+                    
+                    float light1 = pow(max(0.0, dot(direction, light1Dir)), 50.0);
+                    float light2 = pow(max(0.0, dot(direction, light2Dir)), 50.0);
+                    
+                    color = skyColor;
+                    color += vec3(1.0, 0.8, 0.3) * light1 * 2.0;
+                    color += vec3(0.3, 0.8, 1.0) * light2 * 1.5;
+                    
+                    // Add some stars/particles in reflection
+                    float stars = smoothstep(0.99, 1.0, sin(direction.x * 100.0) * sin(direction.y * 100.0) * sin(direction.z * 100.0));
+                    color += vec3(stars) * 0.5;
+                    
+                    return color;
+                }
+                
+                // Screen space reflections approximation
+                vec3 getSSR(vec3 viewPos, vec3 normal) {
+                    vec2 screenUV = gl_FragCoord.xy / resolution;
+                    vec3 reflectDir = reflect(normalize(viewPos), normal);
+                    
+                    // March in screen space
+                    vec2 marchUV = screenUV;
+                    vec3 color = vec3(0.0);
+                    
+                    for(int i = 0; i < 10; i++) {
+                        marchUV += reflectDir.xy * 0.01;
+                        
+                        // Sample from virtual framebuffer (simplified)
+                        float pattern = sin(marchUV.x * 50.0 + time) * cos(marchUV.y * 50.0 - time);
+                        color += vec3(0.1, 0.2, 0.3) * pattern * 0.05;
+                    }
+                    
+                    return color;
+                }
+                
+                // Multi-layer reflection
+                vec3 getLayeredReflection(vec3 viewDir, vec3 normal, float rough) {
+                    vec3 reflection = vec3(0.0);
+                    
+                    // Primary reflection
+                    vec3 R1 = reflect(-viewDir, normal);
+                    reflection += getEnvironmentColor(R1) * (1.0 - rough);
+                    
+                    // Secondary reflection with perturbation
+                    vec3 R2 = reflect(-viewDir, normal + vec3(sin(time * 2.0) * 0.1, 0.0, cos(time * 2.0) * 0.1));
+                    reflection += getEnvironmentColor(R2) * 0.3 * (1.0 - rough * 0.5);
+                    
+                    // Blurred reflection for roughness
+                    if(rough > 0.01) {
+                        for(float i = 0.0; i < 4.0; i++) {
+                            float angle = i * 1.57;
+                            vec3 offset = vec3(cos(angle), sin(angle), 0.0) * rough * 0.2;
+                            vec3 R3 = reflect(-viewDir, normalize(normal + offset));
+                            reflection += getEnvironmentColor(R3) * 0.1;
+                        }
+                    }
+                    
+                    return reflection;
+                }
+                
+                void main() {
+                    vec3 normal = normalize(vNormal);
+                    vec3 viewDir = normalize(cameraPos - vWorldPosition);
+                    vec3 halfwayDir = normalize(viewDir + normalize(vec3(1.0, 1.0, 1.0)));
+                    
+                    // Base color with gradient
+                    float gradient = vUv.y + sin(time * 2.0 + vUv.x * 10.0) * 0.1;
+                    vec3 baseColor = mix(colorA, colorB, gradient);
+                    
+                    // Metallic PBR calculations
+                    vec3 F0 = vec3(0.04);
+                    F0 = mix(F0, baseColor, metalness);
+                    
+                    // Calculate reflectance
+                    vec3 F = fresnelSchlickRoughness(max(dot(normal, viewDir), 0.0), F0, roughness);
+                    float NDF = DistributionGGX(normal, halfwayDir, roughness);
+                    float G = GeometrySmith(normal, viewDir, normalize(vec3(1.0, 1.0, 1.0)), roughness);
+                    
+                    // RTX Enhanced Effects
+                    vec3 rtxColor = vec3(0.0);
+                    if(rtxEnabled > 0.5) {
+                        // Multi-layered reflections
+                        vec3 reflection = getLayeredReflection(viewDir, normal, roughness);
+                        
+                        // Screen space reflections
+                        vec3 ssr = getSSR(vViewPosition, normal);
+                        
+                        // Refraction for transparent parts
+                        vec3 refractDir = refract(-viewDir, normal, 1.0 / 1.5);
+                        vec3 refraction = getEnvironmentColor(refractDir) * 0.5;
+                        
+                        // Global illumination approximation
+                        vec3 gi = vec3(0.0);
+                        for(float phi = 0.0; phi < 6.28; phi += 1.57) {
+                            for(float theta = 0.0; theta < 1.57; theta += 0.52) {
+                                vec3 sampleDir = vec3(
+                                    sin(theta) * cos(phi),
+                                    cos(theta),
+                                    sin(theta) * sin(phi)
+                                );
+                                sampleDir = normalize(mix(sampleDir, normal, 0.5));
+                                gi += getEnvironmentColor(sampleDir) * 0.1;
+                            }
+                        }
+                        
+                        // Caustics effect with proper wave simulation
+                        float caustics = 0.0;
+                        vec3 causticPos = vWorldPosition * 5.0;
+                        for(float i = 1.0; i <= 3.0; i++) {
+                            caustics += sin(causticPos.x * i - time * (4.0 - i)) * 
+                                       cos(causticPos.z * i + time * (3.0 + i)) / i;
+                        }
+                        caustics = caustics * 0.5 + 0.5;
+                        
+                        // Combine all RTX effects
+                        rtxColor = reflection * F * 0.7 + 
+                                  refraction * (1.0 - F) * 0.2 + 
+                                  gi * 0.1 * (1.0 - metalness) +
+                                  ssr * 0.1 +
+                                  vec3(0.2, 0.5, 0.8) * caustics * 0.1 * (1.0 - roughness);
+                        
+                        // Chromatic aberration for realism
+                        float aberration = 0.002 * (1.0 - roughness);
+                        rtxColor.r += getEnvironmentColor(refractDir + vec3(aberration, 0.0, 0.0)).r * 0.05;
+                        rtxColor.b += getEnvironmentColor(refractDir - vec3(aberration, 0.0, 0.0)).b * 0.05;
+                    }
+                    
+                    // Holographic effect
+                    float hologram = sin(vPosition.y * 30.0 - time * 5.0) * 0.5 + 0.5;
+                    baseColor += vec3(0.0, hologram * 0.1, hologram * 0.15);
+                    
+                    // Mouse interaction with ripple effect
+                    float mouseDist = distance(vUv, mousePos);
+                    float ripple = sin(mouseDist * 20.0 - time * 5.0) * 0.5 + 0.5;
+                    float mouseGlow = smoothstep(0.5, 0.0, mouseDist) * ripple;
+                    baseColor += vec3(mouseGlow) * 0.3;
+                    
+                    // Combine all lighting
+                    vec3 finalColor = baseColor * (1.0 - rtxEnabled * 0.7) + rtxColor * rtxEnabled;
+                    
+                    // Add specular highlights
+                    vec3 specular = vec3(1.0) * pow(NDF, 2.0) * G * F;
+                    finalColor += specular * glowIntensity;
+                    
+                    // Emission for glow
+                    vec3 emission = F * glowIntensity * vec3(1.0, 0.8, 0.3) * 0.5;
+                    finalColor += emission;
+                    
+                    // Enhanced tone mapping
+                    finalColor = finalColor / (finalColor + vec3(1.0));
+                    finalColor = pow(finalColor, vec3(1.0/2.2));
+                    
+                    // Output with high opacity for better reflections
+                    gl_FragColor = vec4(finalColor, 0.98);
+                }
+            `,
+            transparent: true,
+            side: THREE.DoubleSide
+        });
+        
+        // Create enhanced Clippy geometry
+        const clippyGroup = new THREE.Group();
+        
+        // Main body with raytracing material
+        const radiusTop = 0.15;
+        const radiusBottom = 0.15;
+        const height = 1.5;
+        const radialSegments = 32;
+        const heightSegments = 32;
+        
+        // Top curve
+        const topCurve = new THREE.Mesh(
+            new THREE.TorusGeometry(0.5, radiusTop, radialSegments, 64, Math.PI),
+            raytracingShader
+        );
+        topCurve.position.y = height / 2;
+        topCurve.rotation.x = Math.PI / 2;
+        topCurve.castShadow = true;
+        topCurve.receiveShadow = true;
+        clippyGroup.add(topCurve);
+        
+        // Vertical segments with more detail
+        const leftSegment = new THREE.Mesh(
+            new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments),
+            raytracingShader
+        );
+        leftSegment.position.x = -0.5;
+        leftSegment.castShadow = true;
+        leftSegment.receiveShadow = true;
+        clippyGroup.add(leftSegment);
+        
+        const rightSegment = new THREE.Mesh(
+            new THREE.CylinderGeometry(radiusTop, radiusBottom, height * 0.7, radialSegments, heightSegments),
+            raytracingShader
+        );
+        rightSegment.position.x = 0.5;
+        rightSegment.position.y = -height * 0.15;
+        rightSegment.castShadow = true;
+        rightSegment.receiveShadow = true;
+        clippyGroup.add(rightSegment);
+        
+        // Bottom curve
+        const bottomCurve = new THREE.Mesh(
+            new THREE.TorusGeometry(0.5, radiusTop, radialSegments, 64, Math.PI),
+            raytracingShader
+        );
+        bottomCurve.position.y = -height / 2;
+        bottomCurve.rotation.x = -Math.PI / 2;
+        bottomCurve.rotation.z = Math.PI;
+        bottomCurve.castShadow = true;
+        bottomCurve.receiveShadow = true;
+        clippyGroup.add(bottomCurve);
+        
+        // Glass eyes with refraction
+        const eyeMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0x00ffff,
+            emissive: 0x00ffff,
+            emissiveIntensity: 0.5,
+            metalness: 0.1,
+            roughness: 0,
+            transparent: true,
+            opacity: 0.9,
+            transmission: 0.9,
+            envMapIntensity: 1,
+            clearcoat: 1,
+            clearcoatRoughness: 0
+        });
+        
+        const leftEye = new THREE.Mesh(
+            new THREE.SphereGeometry(0.12, 32, 32),
+            eyeMaterial
+        );
+        leftEye.position.set(-0.2, 0.3, 0.5);
+        leftEye.castShadow = true;
+        clippyGroup.add(leftEye);
+        
+        const rightEye = new THREE.Mesh(
+            new THREE.SphereGeometry(0.12, 32, 32),
+            eyeMaterial
+        );
+        rightEye.position.set(0.2, 0.3, 0.5);
+        rightEye.castShadow = true;
+        clippyGroup.add(rightEye);
+        
+        scene.add(clippyGroup);
+        
+        // Reflective floor with PBR material
+        const floorGeometry = new THREE.PlaneGeometry(50, 50, 100, 100);
+        const floorMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0x111122,
+            metalness: 0.9,
+            roughness: 0.1,
+            envMapIntensity: 1,
+            clearcoat: 1,
+            clearcoatRoughness: 0,
+            reflectivity: 1
+        });
+        
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -2;
+        floor.receiveShadow = true;
+        
+        // Add displacement to floor vertices for wave effect
+        const floorVertices = floor.geometry.attributes.position;
+        for(let i = 0; i < floorVertices.count; i++) {
+            const x = floorVertices.getX(i);
+            const y = floorVertices.getY(i);
+            const z = Math.sin(x * 0.3) * Math.sin(y * 0.3) * 0.1;
+            floorVertices.setZ(i, z);
+        }
+        floor.geometry.computeVertexNormals();
+        scene.add(floor);
+        
+        // Enhanced particle system with glow
+        const particlesGeometry = new THREE.BufferGeometry();
+        const particlesCount = 2000;
+        const positions = new Float32Array(particlesCount * 3);
+        const colors = new Float32Array(particlesCount * 3);
+        const sizes = new Float32Array(particlesCount);
+        
+        for(let i = 0; i < particlesCount * 3; i += 3) {
+            const radius = Math.random() * 15;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.random() * Math.PI;
+            
+            positions[i] = radius * Math.sin(phi) * Math.cos(theta);
+            positions[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
+            positions[i + 2] = radius * Math.cos(phi);
+            
+            const color = new THREE.Color();
+            color.setHSL(Math.random() * 0.2 + 0.5, 1, 0.5);
+            colors[i] = color.r;
+            colors[i + 1] = color.g;
+            colors[i + 2] = color.b;
+            
+            sizes[i / 3] = Math.random() * 0.1 + 0.02;
+        }
+        
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        particlesGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+        
+        const particlesMaterial = new THREE.PointsMaterial({
+            size: 0.05,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending,
+            sizeAttenuation: true
+        });
+        
+        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        scene.add(particles);
+        
+        // Volumetric light rays
+        const rayGeometry = new THREE.ConeGeometry(0.1, 5, 4);
+        const rayMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.1,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const lightRays = [];
+        for(let i = 0; i < 10; i++) {
+            const ray = new THREE.Mesh(rayGeometry, rayMaterial);
+            ray.position.set(
+                Math.random() * 10 - 5,
+                5,
+                Math.random() * 10 - 5
+            );
+            ray.rotation.x = Math.PI;
+            scene.add(ray);
+            lightRays.push(ray);
+        }
+        
+        // Grid helper
+        const gridHelper = new THREE.GridHelper(20, 40, 0x00ffff, 0x003333);
+        gridHelper.position.y = -1.99;
+        scene.add(gridHelper);
+        
+        // Mouse tracking
+        const mouse = new THREE.Vector2();
+        let mouseX = 0, mouseY = 0;
+        
+        document.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            mouseX = event.clientX / window.innerWidth;
+            mouseY = event.clientY / window.innerHeight;
+            raytracingShader.uniforms.mousePos.value = new THREE.Vector2(mouseX, 1 - mouseY);
+        });
+        
+        // Raycaster for click detection
+        const raycaster = new THREE.Raycaster();
+        
+        document.addEventListener('click', (event) => {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(clippyGroup, true);
+            
+            if(intersects.length > 0) {
+                animateClick();
+                showRandomMessage();
+            }
+        });
+        
+        // Animation states
+        let currentMode = 'IDLE';
+        let animationTime = 0;
+        
+        function animateClick() {
+            currentMode = 'EXCITED';
+            setTimeout(() => { currentMode = 'IDLE'; }, 2000);
+        }
+        
+        // UI Functions
+        const messages = {
+            greet: [
+                "¡RTX ON! Las reflexiones en tiempo real me hacen ver increíble.",
+                "Con ray tracing puedo ver mi propio reflejo. ¿Es esto consciencia?",
+                "DLSS 3.0 activado. Ahora proceso a velocidad cuántica.",
+                "Mi shader tiene más líneas que Matrix. ¿Píldora roja o azul?"
+            ],
+            help: [
+                "Con RTX puedo calcular la trayectoria perfecta de tu productividad.",
+                "Ray tracing activado: Trazando el camino hacia las respuestas.",
+                "Mis reflexiones son tan realistas que tienen reflexiones propias.",
+                "¿Sabías que cada fotón rebota 8 veces antes de llegar a tu ojo?"
+            ],
+            rtx: [
+                "RTX ON: Ahora con 100% más fotones simulados.",
+                "Calculando millones de rayos por segundo. Tu GPU está sudando.",
+                "Las sombras suaves y reflexiones hacen que valga la pena.",
+                "RT Cores trabajando al máximo. Esto es el futuro."
+            ],
+            matrix: [
+                "Veo la Matrix. Todo son rayos rebotando infinitamente.",
+                "No hay cuchara... pero hay reflexión de la cuchara.",
+                "Bienvenido al desierto de lo real... con RTX.",
+                "¿Ves esos rayos? Son billones de cálculos por segundo."
+            ]
+        };
+        
+        function showMessage(text) {
+            const speech = document.getElementById('speech');
+            speech.textContent = text;
+            speech.classList.add('active');
+            setTimeout(() => {
+                speech.classList.remove('active');
+            }, 4000);
+        }
+        
+        function showRandomMessage() {
+            const allMessages = [...messages.greet, ...messages.help, ...messages.rtx];
+            const randomMsg = allMessages[Math.floor(Math.random() * allMessages.length)];
+            showMessage(randomMsg);
+        }
+        
+        function toggleRTX() {
+            rtxEnabled = !rtxEnabled;
+            raytracingShader.uniforms.rtxEnabled.value = rtxEnabled ? 1.0 : 0.0;
+            
+            const btn = event.target;
+            if(rtxEnabled) {
+                btn.textContent = 'RTX: ON';
+                btn.classList.add('rtx-on');
+                showMessage("RTX ON: Ray tracing activado. ¡Mira esas reflexiones!");
+                document.getElementById('rtx-status').textContent = 'ON';
+                renderer.shadowMap.enabled = true;
+            } else {
+                btn.textContent = 'RTX: OFF';
+                btn.classList.remove('rtx-on');
+                showMessage("RTX OFF: Modo rasterización tradicional activado.");
+                document.getElementById('rtx-status').textContent = 'OFF';
+                renderer.shadowMap.enabled = false;
+            }
+        }
+        
+        function greet() {
+            const msg = messages.greet[Math.floor(Math.random() * messages.greet.length)];
+            showMessage(msg);
+            animateClick();
+        }
+        
+        function help() {
+            const msg = messages.help[Math.floor(Math.random() * messages.help.length)];
+            showMessage(msg);
+            currentMode = 'HELPING';
+            setTimeout(() => { currentMode = 'IDLE'; }, 3000);
+        }
+        
+        function quantum() {
+            const msg = messages.rtx[Math.floor(Math.random() * messages.rtx.length)];
+            showMessage(msg);
+            currentMode = 'QUANTUM';
+            
+            // Quantum RTX effect
+            raytracingShader.uniforms.colorA.value = new THREE.Color(0x00ffff);
+            raytracingShader.uniforms.colorB.value = new THREE.Color(0xff00ff);
+            raytracingShader.uniforms.glowIntensity.value = 3.0;
+            raytracingShader.uniforms.roughness.value = 0.0;
+            raytracingShader.uniforms.metalness.value = 1.0;
+            
+            setTimeout(() => {
+                currentMode = 'IDLE';
+                raytracingShader.uniforms.colorA.value = new THREE.Color(0xffd700);
+                raytracingShader.uniforms.colorB.value = new THREE.Color(0xffaa00);
+                raytracingShader.uniforms.glowIntensity.value = 1.0;
+                raytracingShader.uniforms.roughness.value = 0.1;
+                raytracingShader.uniforms.metalness.value = 0.9;
+            }, 5000);
+        }
+        
+        function party() {
+            showMessage("¡PARTY MODE con RTX! ¡Mira esos reflejos de colores!");
+            currentMode = 'PARTY';
+            
+            let hue = 0;
+            const partyInterval = setInterval(() => {
+                hue += 0.01;
+                if(hue > 1) hue = 0;
+                const color = new THREE.Color();
+                color.setHSL(hue, 1, 0.5);
+                raytracingShader.uniforms.colorA.value = color;
+                color.setHSL(hue + 0.3, 1, 0.5);
+                raytracingShader.uniforms.colorB.value = color;
+                
+                // Change point light colors
+                pointLight1.color.setHSL(hue, 1, 0.5);
+                pointLight2.color.setHSL(hue + 0.5, 1, 0.5);
+            }, 50);
+            
+            setTimeout(() => {
+                clearInterval(partyInterval);
+                currentMode = 'IDLE';
+                raytracingShader.uniforms.colorA.value = new THREE.Color(0xffd700);
+                raytracingShader.uniforms.colorB.value = new THREE.Color(0xffaa00);
+                pointLight1.color.set(0xffd700);
+                pointLight2.color.set(0x00ffff);
+            }, 5000);
+        }
+        
+        function matrix() {
+            const msg = messages.matrix[Math.floor(Math.random() * messages.matrix.length)];
+            showMessage(msg);
+            currentMode = 'MATRIX';
+            
+            // Matrix green effect
+            raytracingShader.uniforms.colorA.value = new THREE.Color(0x00ff00);
+            raytracingShader.uniforms.colorB.value = new THREE.Color(0x003300);
+            scene.fog = new THREE.FogExp2(0x001100, 0.2);
+            
+            setTimeout(() => {
+                currentMode = 'IDLE';
+                raytracingShader.uniforms.colorA.value = new THREE.Color(0xffd700);
+                raytracingShader.uniforms.colorB.value = new THREE.Color(0xffaa00);
+                scene.fog = new THREE.FogExp2(0x000011, 0.1);
+            }, 5000);
+        }
+        
+        // FPS and performance counter
+        let fps = 0;
+        let frameCount = 0;
+        let lastTime = performance.now();
+        let rayCount = 0;
+        
+        // Animation loop
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+            animationTime += 0.01;
+            
+            // Update shader uniforms
+            raytracingShader.uniforms.time.value = time;
+            raytracingShader.uniforms.cameraPos.value = camera.position;
+            
+            // Clippy animations based on mode
+            switch(currentMode) {
+                case 'IDLE':
+                    clippyGroup.rotation.y = Math.sin(time) * 0.3;
+                    clippyGroup.position.y = Math.sin(time * 2) * 0.1;
+                    break;
+                case 'EXCITED':
+                    clippyGroup.rotation.y += 0.1;
+                    clippyGroup.position.y = Math.sin(time * 10) * 0.2;
+                    break;
+                case 'HELPING':
+                    clippyGroup.rotation.y = Math.sin(time * 3) * 0.5;
+                    clippyGroup.rotation.z = Math.sin(time * 2) * 0.1;
+                    break;
+                case 'QUANTUM':
+                    clippyGroup.rotation.y = time * 2;
+                    clippyGroup.rotation.x = Math.sin(time * 5) * 0.3;
+                    clippyGroup.rotation.z = Math.cos(time * 5) * 0.3;
+                    clippyGroup.position.y = Math.sin(time * 3) * 0.3;
+                    // Glitch effect
+                    if(Math.random() > 0.95) {
+                        clippyGroup.position.x = (Math.random() - 0.5) * 0.5;
+                        clippyGroup.position.z = (Math.random() - 0.5) * 0.5;
+                    } else {
+                        clippyGroup.position.x *= 0.9;
+                        clippyGroup.position.z *= 0.9;
+                    }
+                    break;
+                case 'PARTY':
+                    clippyGroup.rotation.y = time * 3;
+                    clippyGroup.position.y = Math.abs(Math.sin(time * 5)) * 0.5;
+                    clippyGroup.scale.x = 1 + Math.sin(time * 10) * 0.1;
+                    clippyGroup.scale.y = 1 + Math.cos(time * 10) * 0.1;
+                    clippyGroup.scale.z = 1 + Math.sin(time * 8) * 0.1;
+                    break;
+                case 'MATRIX':
+                    clippyGroup.rotation.y = time;
+                    // Matrix rain effect on position
+                    clippyGroup.position.y = ((time * 2) % 4) - 2;
+                    if(clippyGroup.position.y < -2) {
+                        clippyGroup.position.y = 2;
+                    }
+                    break;
+            }
+            
+            // Eye tracking with smooth follow
+            const eyeTarget = new THREE.Vector3(
+                camera.position.x + mouse.x * 2,
+                camera.position.y + mouse.y * 2,
+                camera.position.z
+            );
+            leftEye.lookAt(eyeTarget);
+            rightEye.lookAt(eyeTarget);
+            
+            // Animate particles with orbital motion
+            particles.rotation.y += 0.0005;
+            particles.rotation.x += 0.0002;
+            
+            const particlePositions = particles.geometry.attributes.position.array;
+            for(let i = 0; i < particlePositions.length; i += 3) {
+                const x = particlePositions[i];
+                const y = particlePositions[i + 1];
+                const distance = Math.sqrt(x * x + y * y);
+                particlePositions[i + 1] += Math.sin(time + distance) * 0.002;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+            
+            // Animate volumetric light rays
+            lightRays.forEach((ray, i) => {
+                ray.rotation.y = time + i;
+                ray.material.opacity = 0.05 + Math.sin(time * 2 + i) * 0.05;
+                ray.scale.x = 1 + Math.sin(time * 3 + i) * 0.2;
+                ray.scale.z = 1 + Math.cos(time * 3 + i) * 0.2;
+            });
+            
+            // Animate lights for dynamic shadows
+            pointLight1.position.x = Math.sin(time) * 5;
+            pointLight1.position.z = Math.cos(time) * 5;
+            pointLight1.position.y = 3 + Math.sin(time * 2) * 2;
+            
+            pointLight2.position.x = Math.cos(time * 0.8) * 5;
+            pointLight2.position.z = Math.sin(time * 0.8) * 5;
+            pointLight2.position.y = -1 + Math.cos(time * 1.5) * 2;
+            
+            pointLight3.position.x = Math.sin(time * 1.2) * 3;
+            pointLight3.position.z = Math.cos(time * 1.2) * 3;
+            
+            // Camera animation for cinematic feel
+            if(currentMode !== 'MATRIX') {
+                camera.position.x = Math.sin(time * 0.3) * 0.5;
+                camera.position.y = 2 + Math.cos(time * 0.2) * 0.3;
+                camera.position.z = 6 + Math.sin(time * 0.1) * 0.5;
+            } else {
+                // Matrix camera effect
+                camera.position.z = 6 + Math.sin(time * 2) * 2;
+                camera.rotation.z = Math.sin(time) * 0.1;
+            }
+            camera.lookAt(0, 0, 0);
+            
+            // Update grid animation
+            gridHelper.position.y = -1.99 + Math.sin(time) * 0.02;
+            gridHelper.rotation.y = time * 0.05;
+            
+            // Floor wave animation
+            const floorTime = time * 2;
+            const floorVertices = floor.geometry.attributes.position;
+            for(let i = 0; i < floorVertices.count; i++) {
+                const x = floorVertices.getX(i);
+                const y = floorVertices.getY(i);
+                const waveHeight = Math.sin(x * 0.3 + floorTime) * Math.sin(y * 0.3 + floorTime) * 0.1;
+                floorVertices.setZ(i, waveHeight);
+            }
+            floor.geometry.computeVertexNormals();
+            floor.geometry.attributes.position.needsUpdate = true;
+            
+            // Simulate ray count
+            if(rtxEnabled) {
+                rayCount = Math.floor(1000000 + Math.sin(time * 10) * 100000);
+            } else {
+                rayCount = 0;
+            }
+            
+            // FPS calculation
+            frameCount++;
+            const currentTime = performance.now();
+            if(currentTime >= lastTime + 1000) {
+                fps = Math.round(frameCount * 1000 / (currentTime - lastTime));
+                frameCount = 0;
+                lastTime = currentTime;
+                document.getElementById('fps').textContent = fps;
+                document.getElementById('rays').textContent = rayCount > 0 ? 
+                    (rayCount / 1000000).toFixed(1) + 'M/s' : '0';
+            }
+            
+            // Update UI
+            document.getElementById('mode').textContent = currentMode;
+            
+            renderer.render(scene, camera);
+        }
+        
+        animate();
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Initial RTX message
+        setTimeout(() => {
+            showMessage("¡Clippy 2025 con RTX ON! Ray tracing, reflexiones y sombras en tiempo real.");
+        }, 2500);
+    </script>
+</body>
+</html>

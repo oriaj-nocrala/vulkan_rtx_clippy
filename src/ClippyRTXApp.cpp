@@ -279,6 +279,9 @@ void ClippyRTXApp::setupRayTracing() {
                                                      static_cast<uint32_t>(indices.size()));
     rayTracingPipeline->createShaderBindingTable();
     
+    // Update descriptor sets with TLAS for ray tracing
+    updateDescriptorSetsWithTLAS();
+    
     std::cout << "Ray Tracing pipeline initialized successfully!" << std::endl;
 }
 
@@ -421,8 +424,9 @@ void ClippyRTXApp::drawFrame() {
         // Draw Clippy with RTX active
         vkCmdDrawIndexed(tempCmdBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
         
-        // Call ray tracing placeholder
-        rayTracingPipeline->traceRays(tempCmdBuffer, swapChainExtent.width, swapChainExtent.height);
+        // Call REAL ray tracing with descriptor set!
+        rayTracingPipeline->traceRays(tempCmdBuffer, swapChainExtent.width, swapChainExtent.height, 
+                                     descriptorSets[currentFrame]);
         
         vkCmdEndRenderPass(tempCmdBuffer);
     } else {
