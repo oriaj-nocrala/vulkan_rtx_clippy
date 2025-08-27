@@ -99,6 +99,13 @@ VkDeviceAddress RayTracingPipeline::getBufferDeviceAddress(VkBuffer buffer) {
     return vkGetBufferDeviceAddress(device, &addressInfo);
 }
 
+VkDeviceAddress RayTracingPipeline::getAccelerationStructureDeviceAddress(VkAccelerationStructureKHR as) {
+    VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
+    addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    addressInfo.accelerationStructure = as;
+    return vkGetAccelerationStructureDeviceAddressKHR(device, &addressInfo);
+}
+
 void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayout) {
     // Create pipeline layout
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -330,6 +337,152 @@ void RayTracingPipeline::createAccelerationStructures(VkBuffer vertexBuffer, VkB
     
     std::cout << "✅ BLAS built successfully with " << primitiveCount << " triangles" << std::endl;
     std::cout << "Acceleration structures setup (step 4: BLAS fully built!)" << std::endl;
+    
+    // === TOP LEVEL ACCELERATION STRUCTURE (TLAS) ===
+    std::cout << "\nStep 5: Creating TLAS (Top Level Acceleration Structure)" << std::endl;
+    
+    // Step 5a: Create instance data for Clippy
+    VkAccelerationStructureInstanceKHR instance{};
+    
+    // Identity transformation matrix (Clippy at origin)
+    instance.transform.matrix[0][0] = 1.0f; instance.transform.matrix[0][1] = 0.0f; instance.transform.matrix[0][2] = 0.0f; instance.transform.matrix[0][3] = 0.0f;
+    instance.transform.matrix[1][0] = 0.0f; instance.transform.matrix[1][1] = 1.0f; instance.transform.matrix[1][2] = 0.0f; instance.transform.matrix[1][3] = 0.0f;
+    instance.transform.matrix[2][0] = 0.0f; instance.transform.matrix[2][1] = 0.0f; instance.transform.matrix[2][2] = 1.0f; instance.transform.matrix[2][3] = 0.0f;
+    
+    instance.instanceCustomIndex = 0;  // Custom index for shader access
+    instance.mask = 0xFF;              // Visibility mask
+    instance.instanceShaderBindingTableRecordOffset = 0; // Hit group offset
+    instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    instance.accelerationStructureReference = getAccelerationStructureDeviceAddress(bottomLevelAS);
+    
+    std::cout << "✅ TLAS instance created with identity transform" << std::endl;
+    std::cout << "   - BLAS address: 0x" << std::hex << instance.accelerationStructureReference << std::dec << std::endl;
+    
+    // Step 5b: Create instance buffer and upload data
+    std::cout << "Step 5b: Creating TLAS instance buffer" << std::endl;
+    
+    VkBuffer instanceBuffer;
+    VkDeviceMemory instanceBufferMemory;
+    VkDeviceSize instanceBufferSize = sizeof(VkAccelerationStructureInstanceKHR);
+    
+    VulkanHelpers::createBuffer(device, physicalDevice,
+                               instanceBufferSize,
+                               VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                               instanceBuffer, instanceBufferMemory);
+    
+    // Upload instance data to buffer
+    void* mappedData;
+    vkMapMemory(device, instanceBufferMemory, 0, instanceBufferSize, 0, &mappedData);
+    memcpy(mappedData, &instance, sizeof(VkAccelerationStructureInstanceKHR));
+    vkUnmapMemory(device, instanceBufferMemory);
+    
+    VkDeviceAddress instanceBufferAddress = getBufferDeviceAddress(instanceBuffer);
+    
+    std::cout << "✅ TLAS instance buffer created and uploaded" << std::endl;
+    std::cout << "   - Instance buffer size: " << instanceBufferSize << " bytes" << std::endl;
+    std::cout << "   - Instance buffer address: 0x" << std::hex << instanceBufferAddress << std::dec << std::endl;
+    
+    // Step 5c: Create TLAS geometry and build info
+    std::cout << "Step 5c: Creating TLAS geometry and build info" << std::endl;
+    
+    // TLAS geometry setup (different from BLAS - uses instances)
+    VkAccelerationStructureGeometryKHR tlasGeometry{};
+    tlasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    tlasGeometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tlasGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    
+    tlasGeometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tlasGeometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    tlasGeometry.geometry.instances.data.deviceAddress = instanceBufferAddress;
+    
+    // TLAS build info
+    VkAccelerationStructureBuildGeometryInfoKHR tlasBuildInfo{};
+    tlasBuildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    tlasBuildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    tlasBuildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    tlasBuildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    tlasBuildInfo.geometryCount = 1;
+    tlasBuildInfo.pGeometries = &tlasGeometry;
+    
+    uint32_t instanceCount = 1; // One Clippy instance
+    VkAccelerationStructureBuildSizesInfoKHR tlasSizeInfo{};
+    tlasSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                                           &tlasBuildInfo, &instanceCount, &tlasSizeInfo);
+    
+    std::cout << "✅ TLAS geometry and build info created" << std::endl;
+    std::cout << "   - TLAS size: " << tlasSizeInfo.accelerationStructureSize << " bytes" << std::endl;
+    std::cout << "   - TLAS scratch size: " << tlasSizeInfo.buildScratchSize << " bytes" << std::endl;
+    std::cout << "   - Instance count: " << instanceCount << std::endl;
+    
+    // Step 5d: Build complete TLAS - FINAL STEP!
+    std::cout << "Step 5d: Building complete TLAS with command buffer (FINAL STEP!)" << std::endl;
+    
+    // Create TLAS buffer
+    VulkanHelpers::createBuffer(device, physicalDevice,
+                               tlasSizeInfo.accelerationStructureSize,
+                               VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                               topLevelASBuffer, topLevelASMemory);
+    
+    // Create TLAS acceleration structure
+    VkAccelerationStructureCreateInfoKHR tlasCreateInfo{};
+    tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    tlasCreateInfo.buffer = topLevelASBuffer;
+    tlasCreateInfo.size = tlasSizeInfo.accelerationStructureSize;
+    tlasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    
+    VkResult tlasResult = vkCreateAccelerationStructureKHR(device, &tlasCreateInfo, nullptr, &topLevelAS);
+    if (tlasResult != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create top level acceleration structure");
+    }
+    
+    std::cout << "   ✅ TLAS buffer and acceleration structure created" << std::endl;
+    
+    // Create TLAS scratch buffer
+    VkBuffer tlasScratchBuffer;
+    VkDeviceMemory tlasScratchMemory;
+    VulkanHelpers::createBuffer(device, physicalDevice,
+                               tlasSizeInfo.buildScratchSize,
+                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                               tlasScratchBuffer, tlasScratchMemory);
+    
+    // Update TLAS build info with destination and scratch addresses
+    tlasBuildInfo.dstAccelerationStructure = topLevelAS;
+    tlasBuildInfo.scratchData.deviceAddress = getBufferDeviceAddress(tlasScratchBuffer);
+    
+    // TLAS build range info
+    VkAccelerationStructureBuildRangeInfoKHR tlasBuildRangeInfo{};
+    tlasBuildRangeInfo.primitiveCount = instanceCount;
+    tlasBuildRangeInfo.primitiveOffset = 0;
+    tlasBuildRangeInfo.firstVertex = 0;
+    tlasBuildRangeInfo.transformOffset = 0;
+    
+    const VkAccelerationStructureBuildRangeInfoKHR* pTlasBuildRangeInfo = &tlasBuildRangeInfo;
+    
+    // Build TLAS with command buffer
+    std::cout << "   - Executing TLAS build with command buffer..." << std::endl;
+    VkCommandBuffer tlasBuildCommandBuffer = beginSingleTimeCommands();
+    
+    vkCmdBuildAccelerationStructuresKHR(tlasBuildCommandBuffer, 1, &tlasBuildInfo, &pTlasBuildRangeInfo);
+    
+    endSingleTimeCommands(tlasBuildCommandBuffer);
+    
+    // Cleanup TLAS scratch buffer
+    vkDestroyBuffer(device, tlasScratchBuffer, nullptr);
+    vkFreeMemory(device, tlasScratchMemory, nullptr);
+    
+    // Cleanup instance buffer (no longer needed)
+    vkDestroyBuffer(device, instanceBuffer, nullptr);
+    vkFreeMemory(device, instanceBufferMemory, nullptr);
+    
+    std::cout << "🎉 ✅ COMPLETE ACCELERATION STRUCTURE HIERARCHY BUILT!" << std::endl;
+    std::cout << "   - BLAS: " << primitiveCount << " triangles (" << blasSizeInfo.accelerationStructureSize << " bytes)" << std::endl;
+    std::cout << "   - TLAS: " << instanceCount << " instance (" << tlasSizeInfo.accelerationStructureSize << " bytes)" << std::endl;
+    std::cout << "   - Total hierarchy: TLAS → BLAS → " << primitiveCount << " triangles" << std::endl;
+    std::cout << "🚀 RTX RAY TRACING INFRASTRUCTURE READY!" << std::endl;
 }
 
 void RayTracingPipeline::createShaderBindingTable() {

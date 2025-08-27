@@ -58,6 +58,7 @@ private:
     
     void loadRayTracingFunctions();
     VkDeviceAddress getBufferDeviceAddress(VkBuffer buffer);
+    VkDeviceAddress getAccelerationStructureDeviceAddress(VkAccelerationStructureKHR as);
     
     // Command buffer helpers for building BLAS
     VkCommandBuffer beginSingleTimeCommands();
