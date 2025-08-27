@@ -272,7 +272,7 @@ bool ClippyRTXApp::checkRayTracingSupport() {
 }
 
 void ClippyRTXApp::setupRayTracing() {
-    rayTracingPipeline = std::make_unique<RayTracingPipeline>(device, physicalDevice);
+    rayTracingPipeline = std::make_unique<RayTracingPipeline>(device, physicalDevice, commandPool, graphicsQueue);
     rayTracingPipeline->createPipeline(descriptorSetLayout);
     rayTracingPipeline->createAccelerationStructures(vertexBuffer, indexBuffer, 
                                                      static_cast<uint32_t>(vertices.size()),

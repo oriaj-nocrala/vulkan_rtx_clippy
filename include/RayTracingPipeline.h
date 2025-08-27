@@ -6,7 +6,8 @@
 
 class RayTracingPipeline {
 public:
-    RayTracingPipeline(VkDevice device, VkPhysicalDevice physicalDevice);
+    RayTracingPipeline(VkDevice device, VkPhysicalDevice physicalDevice, 
+                       VkCommandPool commandPool, VkQueue graphicsQueue);
     ~RayTracingPipeline();
     
     void createPipeline(VkDescriptorSetLayout descriptorSetLayout);
@@ -24,6 +25,8 @@ public:
 private:
     VkDevice device;
     VkPhysicalDevice physicalDevice;
+    VkCommandPool commandPool;
+    VkQueue graphicsQueue;
     VkPipeline pipeline;
     VkPipelineLayout pipelineLayout;
     
@@ -55,6 +58,10 @@ private:
     
     void loadRayTracingFunctions();
     VkDeviceAddress getBufferDeviceAddress(VkBuffer buffer);
+    
+    // Command buffer helpers for building BLAS
+    VkCommandBuffer beginSingleTimeCommands();
+    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     
     VkShaderModule createShaderModule(const std::vector<char>& code);
     std::vector<char> readFile(const std::string& filename);

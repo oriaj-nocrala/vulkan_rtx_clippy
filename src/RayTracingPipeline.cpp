@@ -5,8 +5,10 @@
 #include <iostream>
 #include <cstring>
 
-RayTracingPipeline::RayTracingPipeline(VkDevice device, VkPhysicalDevice physicalDevice)
-    : device(device), physicalDevice(physicalDevice), pipeline(VK_NULL_HANDLE), pipelineLayout(VK_NULL_HANDLE),
+RayTracingPipeline::RayTracingPipeline(VkDevice device, VkPhysicalDevice physicalDevice, 
+                                       VkCommandPool commandPool, VkQueue graphicsQueue)
+    : device(device), physicalDevice(physicalDevice), commandPool(commandPool), graphicsQueue(graphicsQueue), 
+      pipeline(VK_NULL_HANDLE), pipelineLayout(VK_NULL_HANDLE),
       bottomLevelAS(VK_NULL_HANDLE), topLevelAS(VK_NULL_HANDLE),
       bottomLevelASBuffer(VK_NULL_HANDLE), bottomLevelASMemory(VK_NULL_HANDLE),
       topLevelASBuffer(VK_NULL_HANDLE), topLevelASMemory(VK_NULL_HANDLE),
@@ -223,8 +225,111 @@ void RayTracingPipeline::createPipeline(VkDescriptorSetLayout descriptorSetLayou
 
 void RayTracingPipeline::createAccelerationStructures(VkBuffer vertexBuffer, VkBuffer indexBuffer,
                                                       uint32_t vertexCount, uint32_t indexCount) {
-    // Simple placeholder for now
-    std::cout << "Acceleration structures setup (simple placeholder)" << std::endl;
+    
+    std::cout << "Step 1: Creating BLAS (Bottom Level Acceleration Structure)" << std::endl;
+    
+    // BLAS geometry setup
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    
+    geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geometry.geometry.triangles.vertexData.deviceAddress = getBufferDeviceAddress(vertexBuffer);
+    geometry.geometry.triangles.vertexStride = sizeof(Vertex);
+    geometry.geometry.triangles.maxVertex = vertexCount - 1;
+    geometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+    geometry.geometry.triangles.indexData.deviceAddress = getBufferDeviceAddress(indexBuffer);
+    
+    // Build info
+    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
+    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    buildInfo.geometryCount = 1;
+    buildInfo.pGeometries = &geometry;
+    
+    uint32_t primitiveCount = indexCount / 3;
+    VkAccelerationStructureBuildSizesInfoKHR blasSizeInfo{};
+    blasSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, 
+                                           &buildInfo, &primitiveCount, &blasSizeInfo);
+    
+    std::cout << "✅ BLAS size calculated: " << blasSizeInfo.accelerationStructureSize << " bytes" << std::endl;
+    std::cout << "   - Vertices: " << vertexCount << ", Triangles: " << primitiveCount << std::endl;
+    
+    // Step 2: Create BLAS buffer and memory
+    std::cout << "Step 2: Creating BLAS buffer and memory allocation" << std::endl;
+    
+    VulkanHelpers::createBuffer(device, physicalDevice, 
+                               blasSizeInfo.accelerationStructureSize,
+                               VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                               bottomLevelASBuffer, bottomLevelASMemory);
+    
+    std::cout << "✅ BLAS buffer created: " << blasSizeInfo.accelerationStructureSize << " bytes allocated" << std::endl;
+    
+    // Step 3: Create actual acceleration structure
+    std::cout << "Step 3: Creating BLAS acceleration structure" << std::endl;
+    
+    VkAccelerationStructureCreateInfoKHR asCreateInfo{};
+    asCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    asCreateInfo.buffer = bottomLevelASBuffer;
+    asCreateInfo.size = blasSizeInfo.accelerationStructureSize;
+    asCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    
+    VkResult result = vkCreateAccelerationStructureKHR(device, &asCreateInfo, nullptr, &bottomLevelAS);
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create bottom level acceleration structure");
+    }
+    
+    std::cout << "✅ BLAS acceleration structure created successfully" << std::endl;
+    
+    // Step 4: Build the BLAS with command buffer (complex step)
+    std::cout << "Step 4: Building BLAS with command buffer" << std::endl;
+    
+    // Need scratch buffer for building
+    VkBuffer scratchBuffer;
+    VkDeviceMemory scratchMemory;
+    VulkanHelpers::createBuffer(device, physicalDevice,
+                               blasSizeInfo.buildScratchSize,
+                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                               scratchBuffer, scratchMemory);
+    
+    // Update build info with destination and scratch addresses
+    buildInfo.dstAccelerationStructure = bottomLevelAS;
+    buildInfo.scratchData.deviceAddress = getBufferDeviceAddress(scratchBuffer);
+    
+    // Build range info
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.primitiveCount = primitiveCount;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.transformOffset = 0;
+    
+    const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfo = &buildRangeInfo;
+    
+    // Real command buffer building
+    std::cout << "   - Scratch buffer created: " << blasSizeInfo.buildScratchSize << " bytes" << std::endl;
+    std::cout << "   - Build info configured with addresses" << std::endl;
+    
+    VkCommandBuffer buildCommandBuffer = beginSingleTimeCommands();
+    
+    std::cout << "   - Executing vkCmdBuildAccelerationStructuresKHR..." << std::endl;
+    vkCmdBuildAccelerationStructuresKHR(buildCommandBuffer, 1, &buildInfo, &pBuildRangeInfo);
+    
+    endSingleTimeCommands(buildCommandBuffer);
+    std::cout << "   - Command buffer executed and submitted to GPU" << std::endl;
+    
+    // Cleanup scratch buffer
+    vkDestroyBuffer(device, scratchBuffer, nullptr);
+    vkFreeMemory(device, scratchMemory, nullptr);
+    
+    std::cout << "✅ BLAS built successfully with " << primitiveCount << " triangles" << std::endl;
+    std::cout << "Acceleration structures setup (step 4: BLAS fully built!)" << std::endl;
 }
 
 void RayTracingPipeline::createShaderBindingTable() {
@@ -240,6 +345,39 @@ void RayTracingPipeline::createShaderBindingTable() {
 void RayTracingPipeline::traceRays(VkCommandBuffer commandBuffer, uint32_t width, uint32_t height) {
     // Safe placeholder
     std::cout << "RTX Ray Tracing executed (safe placeholder)" << std::endl;
+}
+
+VkCommandBuffer RayTracingPipeline::beginSingleTimeCommands() {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+    return commandBuffer;
+}
+
+void RayTracingPipeline::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+    vkEndCommandBuffer(commandBuffer);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue);
+
+    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 
 VkShaderModule RayTracingPipeline::createShaderModule(const std::vector<char>& code) {
