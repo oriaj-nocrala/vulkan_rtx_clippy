@@ -27,8 +27,16 @@ layout(binding = 3, set = 0) uniform CameraProperties {
     int isBGRFormat; // 1 if BGR format, 0 if RGB
 } cam;
 
-layout(location = 0) rayPayloadEXT vec3 hitValue;
-layout(location = 1) rayPayloadEXT vec3 reflectionValue;
+// 🚀 PROFESSIONAL RAY PAYLOAD STRUCTURE - MATCH OTHER SHADERS
+struct RayPayload {
+    vec3 color;          // Final color result
+    int depth;           // Current recursion depth  
+    int rayType;         // 0=primary, 1=reflection, 2=shadow, 3=GI
+    vec3 throughput;     // Energy throughput for path tracing
+    uint flags;          // Debug and control flags
+};
+
+layout(location = 0) rayPayloadEXT RayPayload payload;
 
 // Advanced random number generation
 uint rngState;
@@ -126,24 +134,60 @@ vec3 getMotionBlurredPosition(vec3 worldPos) {
 
 void main() {
     const ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
-    const vec2 pixelCenter = vec2(pixel) + vec2(0.5);
-    const vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
-    vec2 d = inUV * 2.0 - 1.0;
     
-    // Generate camera ray
-    vec4 origin = cam.viewInverse * vec4(0, 0, 0, 1);
-    vec4 target = cam.projInverse * vec4(d.x, d.y, 1, 1);
-    vec3 direction = normalize((cam.viewInverse * vec4(normalize(target.xyz), 0)).xyz);
+    // 🎯 PROFESSIONAL ANTI-ALIASING WITH MULTIPLE SAMPLES
+    vec3 accumulatedColor = vec3(0.0);
+    int actualSamples = max(1, cam.samplesPerPixel); // At least 1 sample
     
-    // Simple single ray
-    uint rayFlags = gl_RayFlagsOpaqueEXT;
-    float tMin = 0.001;
-    float tMax = 1000.0;
+    // Initialize RNG for this pixel
+    uint pixelIndex = pixel.y * gl_LaunchSizeEXT.x + pixel.x;
+    rngState = wang_hash(pixelIndex + cam.frameCount * 0x9e3779b9u);
     
-    traceRayEXT(topLevelAS, rayFlags, 0xff, 0, 0, 0, origin.xyz, tMin, direction, tMax, 0);
+    for (int sampleIdx = 0; sampleIdx < actualSamples; sampleIdx++) {
+        // Anti-aliasing jitter
+        vec2 jitter = (actualSamples > 1) ? (rnd2() - 0.5) : vec2(0.0);
+        vec2 pixelCenter = vec2(pixel) + vec2(0.5) + jitter;
+        vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+        vec2 d = inUV * 2.0 - 1.0;
+        
+        // Generate camera ray
+        vec4 origin = cam.viewInverse * vec4(0, 0, 0, 1);
+        vec4 target = cam.projInverse * vec4(d.x, d.y, 1, 1);
+        vec3 direction = normalize((cam.viewInverse * vec4(normalize(target.xyz), 0)).xyz);
+        
+        // 🎭 ADVANCED CAMERA EFFECTS
+        if (actualSamples > 1) {
+            // Depth of field
+            direction = getDOFRayDirection(direction, origin.xyz);
+            
+            // Motion blur for moving objects
+            origin.xyz = getMotionBlurredPosition(origin.xyz);
+        }
+        
+        // Ray tracing setup
+        uint rayFlags = gl_RayFlagsOpaqueEXT;
+        float tMin = 0.001;
+        float tMax = 1000.0;
+        
+        // 🚀 INITIALIZE PRIMARY RAY PAYLOAD PROFESSIONALLY
+        payload.color = vec3(0.0);        // Clear color
+        payload.depth = 0;                // Primary ray starts at depth 0
+        payload.rayType = 0;              // Primary ray type
+        payload.throughput = vec3(1.0);   // Full energy throughput initially  
+        payload.flags = uint(sampleIdx);     // Store sample index for debugging
+        
+        // 🎯 DISPATCH PRIMARY RAY WITH INITIALIZED PAYLOAD
+        traceRayEXT(topLevelAS, rayFlags, 0xff, 0, 0, 0, origin.xyz, tMin, direction, tMax, 0);
+        
+        // 🔬 ACCUMULATE SAMPLE RESULT
+        accumulatedColor += payload.color;
+    }
     
-    // Use the hit value directly - NO CLAMPING TO PRESERVE GOLD!
-    vec3 finalColor = hitValue; // Pure color from shaders
+    // Average all samples
+    vec3 finalColor = accumulatedColor / float(actualSamples);
+    
+    // 🎨 ADVANCED TONE MAPPING
+    finalColor = acesToneMapping(finalColor);
     
     // CONDITIONAL BGR CORRECTION: Only swap if BGR format detected
     if (cam.isBGRFormat == 1) {
