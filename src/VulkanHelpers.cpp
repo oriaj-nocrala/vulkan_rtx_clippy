@@ -303,6 +303,79 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanHelpers::debugCallback(VkDebugUtilsMessageS
                                                            VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                            const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
                                                            void* pUserData) {
-    std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+    // Color-coded severity levels
+    const char* severityColor = "";
+    const char* resetColor = "\033[0m";
+    
+    switch(messageSeverity) {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
+            severityColor = "\033[0;37m"; // White
+            break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
+            severityColor = "\033[0;36m"; // Cyan
+            break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
+            severityColor = "\033[0;33m"; // Yellow
+            break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
+            severityColor = "\033[0;31m"; // Red
+            break;
+    }
+    
+    // Enhanced message type detection
+    std::string typeStr = "GENERAL";
+    if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) {
+        typeStr = "VALIDATION";
+    }
+    if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT) {
+        typeStr = "PERFORMANCE";
+    }
+    
+    // RAY TRACING SPECIFIC DEBUGGING
+    std::string message = pCallbackData->pMessage;
+    bool isRayTracingRelated = false;
+    
+    // Check for ray tracing keywords
+    std::vector<std::string> rtKeywords = {
+        "ray", "tracing", "acceleration", "structure", "BLAS", "TLAS",
+        "traceRayEXT", "rayPayload", "hitAttribute", "closest", "miss",
+        "VK_KHR_ray_tracing", "VK_KHR_acceleration_structure",
+        "recursion", "shader binding table", "SBT", "raygen", "rchit", "rmiss"
+    };
+    
+    for (const auto& keyword : rtKeywords) {
+        if (message.find(keyword) != std::string::npos) {
+            isRayTracingRelated = true;
+            break;
+        }
+    }
+    
+    // Special formatting for RT messages
+    if (isRayTracingRelated) {
+        std::cerr << "\033[1;35m🚀 RAY TRACING DEBUG\033[0m " << severityColor 
+                  << "[" << typeStr << "] " << resetColor;
+    } else {
+        std::cerr << severityColor << "[" << typeStr << "] " << resetColor;
+    }
+    
+    std::cerr << pCallbackData->pMessage << std::endl;
+    
+    // Additional object debugging info for RT issues
+    if (isRayTracingRelated && pCallbackData->objectCount > 0) {
+        std::cerr << "  📋 Objects involved:" << std::endl;
+        for (uint32_t i = 0; i < pCallbackData->objectCount; i++) {
+            std::cerr << "    - " << pCallbackData->pObjects[i].pObjectName 
+                      << " (Handle: 0x" << std::hex << pCallbackData->pObjects[i].objectHandle 
+                      << std::dec << ")" << std::endl;
+        }
+    }
+    
+    // Break on critical RT errors for debugging
+    #ifdef ENABLE_RAY_TRACING_DEBUG
+    if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT && isRayTracingRelated) {
+        std::cerr << "\033[1;31m💥 CRITICAL RAY TRACING ERROR - Consider breakpoint here\033[0m" << std::endl;
+    }
+    #endif
+    
     return VK_FALSE;
 }

@@ -5,6 +5,7 @@
 #include <set>
 #include <algorithm>
 #include <array>
+#include <chrono>
 
 // Validation layers para debug
 const std::vector<const char*> validationLayers = {
@@ -193,6 +194,7 @@ void ClippyRTXApp::initVulkan() {
     createCommandPool();
     createColorResources();
     createDepthResources();
+    createRayTracingStorageImages();
     createFramebuffers();
     createClippyGeometry();
     createVertexBuffer();
@@ -214,8 +216,8 @@ void ClippyRTXApp::initVulkan() {
     // Setup UI system
     setupUI();
     
-    // Setup post-processing - with error handling now
-    setupPostProcessing();
+    // DISABLED POST-PROCESSING TO DEBUG GOLD COLOR
+    // setupPostProcessing();
     
     std::cout << "All initialization completed, ready to start main loop!" << std::endl;
 }
@@ -376,59 +378,23 @@ void ClippyRTXApp::drawFrame() {
         throw std::runtime_error("failed to begin recording temporary command buffer!");
     }
     
-    // ULTRA RTX RENDERING 🔥 ACTIVATED!
+    // 🔥 PURE RTX RENDERING - REAL RAY TRACING! 🔥
     if (rtxEnabled && rayTracingPipeline) {
-        // RTX Ray Tracing Path - The Future!
-        std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // Pure black for ray tracing
-        clearValues[1].depthStencil = {1.0f, 0};
+        std::cout << "🔥 EXECUTING REAL RAY TRACING DISPATCH WITH TLAS! 🔥" << std::endl;
+        std::cout << "   - Resolution: " << swapChainExtent.width << "x" << swapChainExtent.height << std::endl;
         
-        VkRenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
-        renderPassInfo.renderArea.offset = {0, 0};
-        renderPassInfo.renderArea.extent = swapChainExtent;
-        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-        renderPassInfo.pClearValues = clearValues.data();
-        
-        vkCmdBeginRenderPass(tempCmdBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-        
-        // RTX Placeholder: For now, render using traditional pipeline but with RTX-style background
-        // This shows RTX is active until full ray tracing is implemented
-        vkCmdBindPipeline(tempCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-        
-        VkViewport viewport{};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = static_cast<float>(swapChainExtent.width);
-        viewport.height = static_cast<float>(swapChainExtent.height);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(tempCmdBuffer, 0, 1, &viewport);
-        
-        VkRect2D scissor{};
-        scissor.offset = {0, 0};
-        scissor.extent = swapChainExtent;
-        vkCmdSetScissor(tempCmdBuffer, 0, 1, &scissor);
-        
-        VkBuffer vertexBuffers[] = {vertexBuffer};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(tempCmdBuffer, 0, 1, vertexBuffers, offsets);
-        
-        vkCmdBindIndexBuffer(tempCmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        
-        vkCmdBindDescriptorSets(tempCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, 
-                               &descriptorSets[currentFrame], 0, nullptr);
-        
-        // Draw Clippy with RTX active
-        vkCmdDrawIndexed(tempCmdBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
-        
-        // Call REAL ray tracing with descriptor set!
+        // Step 1: Execute ray tracing OUTSIDE render pass (writes to storage images)
         rayTracingPipeline->traceRays(tempCmdBuffer, swapChainExtent.width, swapChainExtent.height, 
                                      descriptorSets[currentFrame]);
         
-        vkCmdEndRenderPass(tempCmdBuffer);
+        // Step 2: Copy RT output image to swapchain image for display
+        copyRTOutputToSwapchain(tempCmdBuffer, imageIndex);
+        
+        // End the command buffer for RTX path
+        if (vkEndCommandBuffer(tempCmdBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to end RTX command buffer!");
+        }
+        std::cout << "✅ RTX command buffer completed successfully!" << std::endl;
     } else {
         // Fallback Rasterization Path
         std::array<VkClearValue, 2> clearValues{};
@@ -475,10 +441,12 @@ void ClippyRTXApp::drawFrame() {
         vkCmdDrawIndexed(tempCmdBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
         
         vkCmdEndRenderPass(tempCmdBuffer);
-    }
-    
-    if (vkEndCommandBuffer(tempCmdBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to record temporary command buffer!");
+        
+        // End command buffer for rasterization path
+        if (vkEndCommandBuffer(tempCmdBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to record rasterization command buffer!");
+        }
+        std::cout << "✅ Rasterization command buffer completed successfully!" << std::endl;
     }
     
     // Command buffer ready
@@ -493,9 +461,48 @@ void ClippyRTXApp::drawFrame() {
     
     vkResetFences(device, 1, &inFlightFences[currentFrame]);
     
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+    // 🔧 ENHANCED GPU HANG DETECTION WITH TIMEOUT MONITORING
+    #ifdef ENABLE_RAY_TRACING_DEBUG
+    auto submitStartTime = std::chrono::high_resolution_clock::now();
+    std::cout << "⏱️  Submitting command buffer with timeout monitoring..." << std::endl;
+    #endif
+    
+    VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
+    if (submitResult != VK_SUCCESS) {
+        #ifdef ENABLE_RAY_TRACING_DEBUG
+        std::cerr << "💥 QUEUE SUBMIT FAILED with result: " << submitResult << std::endl;
+        if (submitResult == VK_ERROR_DEVICE_LOST) {
+            std::cerr << "🚨 DEVICE LOST - Possible GPU hang or driver crash!" << std::endl;
+        }
+        #endif
         throw std::runtime_error("failed to submit draw command buffer!");
     }
+    
+    #ifdef ENABLE_RAY_TRACING_DEBUG
+    auto submitEndTime = std::chrono::high_resolution_clock::now();
+    auto submitDuration = std::chrono::duration_cast<std::chrono::milliseconds>(submitEndTime - submitStartTime);
+    std::cout << "✅ Command buffer submitted in " << submitDuration.count() << "ms" << std::endl;
+    
+    // Monitor fence wait time with timeout
+    auto fenceWaitStart = std::chrono::high_resolution_clock::now();
+    VkResult fenceResult = vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, 2000000000); // 2 second timeout
+    auto fenceWaitEnd = std::chrono::high_resolution_clock::now();
+    auto fenceWaitDuration = std::chrono::duration_cast<std::chrono::milliseconds>(fenceWaitEnd - fenceWaitStart);
+    
+    if (fenceResult == VK_TIMEOUT) {
+        std::cerr << "⚠️  FENCE TIMEOUT after 2 seconds - Possible GPU hang!" << std::endl;
+        std::cerr << "   Ray tracing dispatch might be stuck in infinite loop" << std::endl;
+        std::cerr << "   Check shader recursion limits and termination conditions" << std::endl;
+        // Don't throw - let it continue and see validation layer output
+    } else if (fenceResult == VK_SUCCESS) {
+        std::cout << "🔄 GPU work completed in " << fenceWaitDuration.count() << "ms" << std::endl;
+        if (fenceWaitDuration.count() > 500) {
+            std::cout << "⚠️  High GPU execution time - monitoring for hangs" << std::endl;
+        }
+    } else {
+        std::cerr << "💥 FENCE WAIT FAILED with result: " << fenceResult << std::endl;
+    }
+    #endif
     
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -625,14 +632,22 @@ void ClippyRTXApp::updateUniformBuffer(uint32_t currentImage) {
     ubo.maxBounces = maxBounces;
     ubo.samplesPerPixel = samplesPerPixel;
     
-    // Dynamic RTX parameters based on animation mode
+    // Set BGR format flag for shader correction
+    ubo.isBGRFormat = (swapChainImageFormat == VK_FORMAT_B8G8R8A8_SRGB || 
+                       swapChainImageFormat == VK_FORMAT_B8G8R8A8_UNORM) ? 1 : 0;
+    
+    // PERFORMANCE: Reduced RTX parameters for Global Illumination
+    ubo.maxBounces = 1;  // REDUCED: Only 1 bounce for performance
+    ubo.samplesPerPixel = 1; // REDUCED: 1 sample per pixel
+    
+    // Dynamic RTX parameters based on animation mode (REDUCED)
     if (currentAnimationMode == AnimationMode::QUANTUM) {
-        ubo.maxBounces = 5;
-        ubo.samplesPerPixel = 8;
+        ubo.maxBounces = 1; // REDUCED from 5
+        ubo.samplesPerPixel = 1; // REDUCED from 8
         ubo.glowIntensity = 2.0f;
     } else if (currentAnimationMode == AnimationMode::PARTY) {
-        ubo.maxBounces = 2;
-        ubo.samplesPerPixel = 6;
+        ubo.maxBounces = 1; // REDUCED from 2
+        ubo.samplesPerPixel = 1; // REDUCED from 6
         ubo.glowIntensity = 3.0f + sin(totalTime * 10.0f) * 0.5f;
     }
     
@@ -822,9 +837,19 @@ std::vector<const char*> ClippyRTXApp::getRequiredExtensions() {
 void ClippyRTXApp::populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
     createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    
+    // Enhanced debug verbosity for ray tracing debugging
+    #ifdef ENABLE_RAY_TRACING_DEBUG
     createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | 
+                                VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | 
                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    std::cout << "🔧 Enhanced Ray Tracing Debug Mode ENABLED" << std::endl;
+    #else
+    createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | 
+                                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    #endif
+    
     createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | 
                             VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | 
                             VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
@@ -938,11 +963,40 @@ void ClippyRTXApp::createLogicalDevice() {
 void ClippyRTXApp::createSwapChain() {
     SwapChainSupportDetails swapChainSupport = VulkanHelpers::querySwapChainSupport(physicalDevice, surface);
     
-    VkSurfaceFormatKHR surfaceFormat = swapChainSupport.formats[0];
+    // FIXED: Prefer RGB over BGR for correct color display across platforms
+    VkSurfaceFormatKHR surfaceFormat = swapChainSupport.formats[0]; // fallback
+    
+    // PRIORITY 1: Look for RGB SRGB (ideal for cross-platform)
     for (const auto& availableFormat : swapChainSupport.formats) {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && 
+        if (availableFormat.format == VK_FORMAT_R8G8B8A8_SRGB && 
             availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             surfaceFormat = availableFormat;
+            std::cout << "✅ Selected RGB format (cross-platform compatible)" << std::endl;
+            break;
+        }
+    }
+    
+    // PRIORITY 2: Look for RGB UNORM if SRGB not available  
+    for (const auto& availableFormat : swapChainSupport.formats) {
+        if (availableFormat.format == VK_FORMAT_R8G8B8A8_UNORM && 
+            availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            surfaceFormat = availableFormat;
+            std::cout << "✅ Selected RGB UNORM format" << std::endl;
+            break;
+        }
+    }
+    
+    // FALLBACK: Use BGR only if no RGB available (Linux X11 compatibility)
+    bool foundRGB = (surfaceFormat.format == VK_FORMAT_R8G8B8A8_SRGB || 
+                     surfaceFormat.format == VK_FORMAT_R8G8B8A8_UNORM);
+    if (!foundRGB) {
+        for (const auto& availableFormat : swapChainSupport.formats) {
+            if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && 
+                availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                surfaceFormat = availableFormat;
+                std::cout << "⚠️  Fallback to BGR format (will need color correction)" << std::endl;
+                break;
+            }
         }
     }
     
@@ -1014,6 +1068,14 @@ void ClippyRTXApp::createSwapChain() {
     
     swapChainImageFormat = surfaceFormat.format;
     swapChainExtent = extent;
+    
+    // DEBUG: Show what format we're using
+    std::cout << "🎨 Swapchain format: " << swapChainImageFormat << std::endl;
+    if (swapChainImageFormat == VK_FORMAT_B8G8R8A8_SRGB || swapChainImageFormat == VK_FORMAT_B8G8R8A8_UNORM) {
+        std::cout << "   -> BGR format detected - will need color correction in shaders" << std::endl;
+    } else if (swapChainImageFormat == VK_FORMAT_R8G8B8A8_SRGB || swapChainImageFormat == VK_FORMAT_R8G8B8A8_UNORM) {
+        std::cout << "   -> RGB format detected - colors will display correctly" << std::endl;
+    }
 }
 
 void ClippyRTXApp::createImageViews() {
@@ -1167,7 +1229,7 @@ void ClippyRTXApp::setupPostProcessing() {
         postProcessing = std::make_unique<PostProcessing>(device, physicalDevice, renderPass, swapChainExtent);
         
         // ULTRA PRO EFFECTS ACTIVATED! 🔥
-        postProcessing->enableTonemap(true);
+        postProcessing->enableTonemap(false); // DISABLED TO DEBUG GOLD COLOR
         postProcessing->enableBloom(true);
         postProcessing->enableVignette(true);
         postProcessing->enableChromaticAberration(true);

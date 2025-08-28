@@ -24,6 +24,7 @@ struct UniformBufferObject {
     alignas(4) int frameCount;
     alignas(4) int maxBounces;
     alignas(4) int samplesPerPixel;
+    alignas(4) int isBGRFormat; // 1 if BGR format, 0 if RGB
 };
 
 // Material PBR para Clippy

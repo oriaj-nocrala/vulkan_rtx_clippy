@@ -24,6 +24,7 @@ layout(binding = 3, set = 0) uniform CameraProperties {
     int frameCount;
     int maxBounces;
     int samplesPerPixel;
+    int isBGRFormat; // 1 if BGR format, 0 if RGB
 } cam;
 
 layout(location = 0) rayPayloadEXT vec3 hitValue;
@@ -126,151 +127,29 @@ vec3 getMotionBlurredPosition(vec3 worldPos) {
 void main() {
     const ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
     const vec2 pixelCenter = vec2(pixel) + vec2(0.5);
+    const vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+    vec2 d = inUV * 2.0 - 1.0;
     
-    // Temporal accumulation
-    vec3 accumulatedColor = vec3(0.0);
-    int samples = cam.rtxEnabled == 1 ? cam.samplesPerPixel : 1;
+    // Generate camera ray
+    vec4 origin = cam.viewInverse * vec4(0, 0, 0, 1);
+    vec4 target = cam.projInverse * vec4(d.x, d.y, 1, 1);
+    vec3 direction = normalize((cam.viewInverse * vec4(normalize(target.xyz), 0)).xyz);
     
-    for(int s = 0; s < samples; s++) {
-        // Jitter for anti-aliasing
-        vec2 jitter = getJitter();
-        const vec2 inUV = (pixelCenter + jitter) / vec2(gl_LaunchSizeEXT.xy);
-        vec2 d = inUV * 2.0 - 1.0;
-        
-        // Generate camera ray
-        vec4 origin = cam.viewInverse * vec4(0, 0, 0, 1);
-        vec4 target = cam.projInverse * vec4(d.x, d.y, 1, 1);
-        vec3 direction = normalize((cam.viewInverse * vec4(normalize(target.xyz), 0)).xyz);
-        
-        // Apply depth of field
-        if (cam.rtxEnabled == 1) {
-            direction = getDOFRayDirection(direction, origin.xyz);
-        }
-        
-        // Primary ray
-        uint rayFlags = gl_RayFlagsOpaqueEXT;
-        float tMin = 0.001;
-        float tMax = 1000.0;
-        
-        traceRayEXT(topLevelAS, rayFlags, 0xff, 0, 0, 0, origin.xyz, tMin, direction, tMax, 0);
-        
-        vec3 primaryColor = hitValue;
-        vec3 sampleColor = primaryColor;
-        
-        // Advanced RTX effects
-        if (cam.rtxEnabled == 1) {
-            // Multiple bounce reflections
-            vec3 rayOrigin = origin.xyz;
-            vec3 rayDir = direction;
-            vec3 throughput = vec3(1.0);
-            
-            for(int bounce = 0; bounce < cam.maxBounces && any(greaterThan(throughput, vec3(0.01))); bounce++) {
-                traceRayEXT(topLevelAS, rayFlags, 0xff, 1, 0, 1, rayOrigin, tMin, rayDir, tMax, 1);
-                
-                vec3 bounceColor = reflectionValue;
-                sampleColor += bounceColor * throughput * 0.3;
-                
-                // Russian roulette path termination
-                float maxThroughput = max(throughput.r, max(throughput.g, throughput.b));
-                if(rnd() > maxThroughput) break;
-                
-                throughput /= maxThroughput;
-                throughput *= 0.8; // Energy conservation
-            }
-            
-            // Global illumination sampling
-            vec3 giColor = vec3(0.0);
-            const int giSamples = 4;
-            
-            for(int gi = 0; gi < giSamples; gi++) {
-                vec3 randomDir = cosineWeightedSample(direction);
-                traceRayEXT(topLevelAS, rayFlags, 0xff, 0, 0, 0, origin.xyz, tMin, randomDir, tMax, 0);
-                giColor += hitValue / float(giSamples);
-            }
-            
-            sampleColor += giColor * 0.2;
-            
-            // Volumetric lighting
-            vec3 volumetricColor = vec3(0.0);
-            const int volumetricSamples = 8;
-            
-            for(int vol = 0; vol < volumetricSamples; vol++) {
-                float t = float(vol) / float(volumetricSamples);
-                vec3 samplePos = origin.xyz + direction * t * 10.0;
-                
-                // Sample light at position
-                vec3 lightPos = vec3(sin(cam.time) * 5.0, 5.0, cos(cam.time) * 5.0);
-                vec3 lightDir = normalize(lightPos - samplePos);
-                float lightDist = length(lightPos - samplePos);
-                float attenuation = 1.0 / (1.0 + lightDist * lightDist * 0.1);
-                
-                // Check for occlusion (simplified)
-                float occlusion = 1.0 - t * 0.1;
-                volumetricColor += vec3(1.0, 0.8, 0.3) * attenuation * occlusion * 0.02;
-            }
-            
-            sampleColor += volumetricColor;
-            
-            // Lens effects
-            vec2 lensUV = inUV - 0.5;
-            float lensDistortion = length(lensUV);
-            
-            // Chromatic aberration
-            float aberrationStrength = lensDistortion * 0.01;
-            sampleColor.r *= 1.0 + aberrationStrength;
-            sampleColor.b *= 1.0 - aberrationStrength;
-            
-            // Vignette
-            float vignette = 1.0 - lensDistortion * lensDistortion;
-            sampleColor *= vignette;
-            
-            // Bloom effect
-            float luminance = dot(sampleColor, vec3(0.299, 0.587, 0.114));
-            if (luminance > 1.0) {
-                vec3 bloomColor = sampleColor * (luminance - 1.0) * 0.5;
-                sampleColor += bloomColor;
-            }
-        }
-        
-        accumulatedColor += sampleColor;
+    // Simple single ray
+    uint rayFlags = gl_RayFlagsOpaqueEXT;
+    float tMin = 0.001;
+    float tMax = 1000.0;
+    
+    traceRayEXT(topLevelAS, rayFlags, 0xff, 0, 0, 0, origin.xyz, tMin, direction, tMax, 0);
+    
+    // Use the hit value directly - NO CLAMPING TO PRESERVE GOLD!
+    vec3 finalColor = hitValue; // Pure color from shaders
+    
+    // CONDITIONAL BGR CORRECTION: Only swap if BGR format detected
+    if (cam.isBGRFormat == 1) {
+        finalColor = finalColor.bgr; // Convert RGB -> BGR for BGR swapchain
     }
     
-    accumulatedColor /= float(samples);
-    
-    // Temporal accumulation with previous frames
-    vec3 previousColor = imageLoad(accumulationBuffer, pixel).rgb;
-    float blendFactor = 1.0 / min(float(cam.frameCount + 1), 60.0);
-    vec3 finalColor = mix(previousColor, accumulatedColor, blendFactor);
-    
-    // Store accumulated color
-    imageStore(accumulationBuffer, pixel, vec4(finalColor, 1.0));
-    
-    // Post-processing effects
-    if (cam.rtxEnabled == 1) {
-        // Advanced tone mapping
-        finalColor = acesToneMapping(finalColor);
-        
-        // Exposure adjustment
-        finalColor *= 1.2;
-        
-        // Color grading
-        finalColor.r = pow(finalColor.r, 0.9);
-        finalColor.g = pow(finalColor.g, 0.95);
-        finalColor.b = pow(finalColor.b, 1.05);
-        
-        // Film grain
-        vec2 filmGrainUV = vec2(pixel) / 256.0 + cam.time * 0.1;
-        float grain = (rnd() - 0.5) * 0.02;
-        finalColor += vec3(grain);
-        
-        // Scanlines effect
-        float scanline = sin(float(pixel.y) * 0.5 + cam.time * 2.0) * 0.005;
-        finalColor += vec3(0.0, scanline, scanline * 0.5);
-    }
-    
-    // Gamma correction
-    finalColor = pow(finalColor, vec3(1.0/2.2));
-    
-    // Output final color
+    // Output final color with conditional correction
     imageStore(image, pixel, vec4(finalColor, 1.0));
 }

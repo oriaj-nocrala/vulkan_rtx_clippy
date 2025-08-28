@@ -34,6 +34,7 @@ FetchContent_MakeAvailable(glm)
 
 # Opciones de compilación
 option(ENABLE_VALIDATION_LAYERS "Enable Vulkan validation layers" ON)
+option(ENABLE_RAY_TRACING_DEBUG "Enable extensive ray tracing debugging" ON)
 
 # Archivos fuente
 set(SOURCES
@@ -77,6 +78,10 @@ target_link_libraries(${PROJECT_NAME}
 # Definir macros
 if(ENABLE_VALIDATION_LAYERS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_VALIDATION_LAYERS)
+endif()
+
+if(ENABLE_RAY_TRACING_DEBUG)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RAY_TRACING_DEBUG)
 endif()
 
 # Optimizaciones para release

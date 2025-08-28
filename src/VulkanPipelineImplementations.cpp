@@ -330,9 +330,21 @@ void ClippyRTXApp::createUniformBuffers() {
 
 // Descriptor Pool Implementation
 void ClippyRTXApp::createDescriptorPool() {
-    std::array<VkDescriptorPoolSize, 1> poolSizes{};
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    std::cout << "Creating descriptor pool with RTX support..." << std::endl;
+    
+    std::array<VkDescriptorPoolSize, 3> poolSizes{};
+    
+    // Acceleration structure (TLAS) - binding 0
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    
+    // Storage images (bindings 1 and 2) - output and accumulation
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 2);  // 2 images per frame
+    
+    // Uniform buffer (binding 3) - camera data
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
     
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -343,6 +355,11 @@ void ClippyRTXApp::createDescriptorPool() {
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
     }
+    
+    std::cout << "✅ Descriptor pool created with:" << std::endl;
+    std::cout << "   - " << poolSizes[0].descriptorCount << " acceleration structures" << std::endl;
+    std::cout << "   - " << poolSizes[1].descriptorCount << " storage images" << std::endl;
+    std::cout << "   - " << poolSizes[2].descriptorCount << " uniform buffers" << std::endl;
 }
 
 // Descriptor Sets Implementation
@@ -382,14 +399,14 @@ void ClippyRTXApp::createDescriptorSets() {
     std::cout << "✅ Descriptor sets created (uniform buffer only - TLAS will be added later)" << std::endl;
 }
 
-// Update Descriptor Sets with TLAS for Ray Tracing
+// Update Descriptor Sets with TLAS and Storage Images for Ray Tracing
 void ClippyRTXApp::updateDescriptorSetsWithTLAS() {
     if (!rayTracingPipeline) {
         std::cout << "❌ Cannot update descriptor sets - no ray tracing pipeline" << std::endl;
         return;
     }
     
-    std::cout << "Updating descriptor sets with TLAS..." << std::endl;
+    std::cout << "Updating descriptor sets with TLAS and storage images..." << std::endl;
     VkAccelerationStructureKHR tlas = rayTracingPipeline->getTopLevelAS();
     
     if (tlas == VK_NULL_HANDLE) {
@@ -398,7 +415,9 @@ void ClippyRTXApp::updateDescriptorSetsWithTLAS() {
     }
     
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        // Binding 0: TLAS
+        std::vector<VkWriteDescriptorSet> descriptorWrites;
+        
+        // Binding 0: TLAS (Acceleration Structure)
         VkWriteDescriptorSetAccelerationStructureKHR tlasDescriptor{};
         tlasDescriptor.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
         tlasDescriptor.accelerationStructureCount = 1;
@@ -412,16 +431,49 @@ void ClippyRTXApp::updateDescriptorSetsWithTLAS() {
         tlasWrite.dstArrayElement = 0;
         tlasWrite.descriptorCount = 1;
         tlasWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        descriptorWrites.push_back(tlasWrite);
         
-        // TODO: Add bindings 1 and 2 (images) when needed
+        // Binding 1: RT Output Image (Storage Image)
+        VkDescriptorImageInfo rtOutputImageInfo{};
+        rtOutputImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        rtOutputImageInfo.imageView = rtOutputImageView;
+        rtOutputImageInfo.sampler = VK_NULL_HANDLE;  // No sampler needed for storage images
         
-        std::array<VkWriteDescriptorSet, 1> descriptorWrites = {tlasWrite};
+        VkWriteDescriptorSet rtOutputWrite{};
+        rtOutputWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        rtOutputWrite.dstSet = descriptorSets[i];
+        rtOutputWrite.dstBinding = 1;
+        rtOutputWrite.dstArrayElement = 0;
+        rtOutputWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        rtOutputWrite.descriptorCount = 1;
+        rtOutputWrite.pImageInfo = &rtOutputImageInfo;
+        descriptorWrites.push_back(rtOutputWrite);
+        
+        // Binding 2: Accumulation Image (Storage Image)
+        VkDescriptorImageInfo rtAccumImageInfo{};
+        rtAccumImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        rtAccumImageInfo.imageView = rtAccumulationImageView;
+        rtAccumImageInfo.sampler = VK_NULL_HANDLE;  // No sampler needed for storage images
+        
+        VkWriteDescriptorSet rtAccumWrite{};
+        rtAccumWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        rtAccumWrite.dstSet = descriptorSets[i];
+        rtAccumWrite.dstBinding = 2;
+        rtAccumWrite.dstArrayElement = 0;
+        rtAccumWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        rtAccumWrite.descriptorCount = 1;
+        rtAccumWrite.pImageInfo = &rtAccumImageInfo;
+        descriptorWrites.push_back(rtAccumWrite);
+        
+        // Update all descriptor sets at once
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), 
                               descriptorWrites.data(), 0, nullptr);
     }
     
-    std::cout << "✅ Descriptor sets updated with TLAS for " << MAX_FRAMES_IN_FLIGHT << " frames" << std::endl;
+    std::cout << "✅ Descriptor sets updated with complete RTX bindings for " << MAX_FRAMES_IN_FLIGHT << " frames:" << std::endl;
     std::cout << "   - Binding 0: TLAS (acceleration structure)" << std::endl;
+    std::cout << "   - Binding 1: RT output image (" << swapChainExtent.width << "x" << swapChainExtent.height << ")" << std::endl;
+    std::cout << "   - Binding 2: Accumulation image (" << swapChainExtent.width << "x" << swapChainExtent.height << ")" << std::endl;
     std::cout << "   - Binding 3: Uniform buffer (already bound)" << std::endl;
 }
 
@@ -481,7 +533,54 @@ void ClippyRTXApp::recreateSwapChain() {
     createImageViews();
     createColorResources();
     createDepthResources();
+    createRayTracingStorageImages();  // Recreate RT storage images with new size
     createFramebuffers();
+    
+    // Update descriptor sets with new storage images
+    if (rayTracingPipeline) {
+        updateDescriptorSetsWithTLAS();
+    }
+}
+
+// Ray Tracing Storage Images Implementation
+void ClippyRTXApp::createRayTracingStorageImages() {
+    std::cout << "Creating ray tracing storage images..." << std::endl;
+    
+    // Create RT output image (for final ray traced result)
+    VulkanHelpers::createImage(
+        device, physicalDevice,
+        swapChainExtent.width, swapChainExtent.height, 1,
+        VK_SAMPLE_COUNT_1_BIT,
+        VK_FORMAT_R8G8B8A8_UNORM,  // Standard RGBA format
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        rtOutputImage, rtOutputImageMemory
+    );
+    
+    rtOutputImageView = VulkanHelpers::createImageView(
+        device, rtOutputImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1
+    );
+    
+    // Create accumulation image (for progressive rendering)
+    VulkanHelpers::createImage(
+        device, physicalDevice,
+        swapChainExtent.width, swapChainExtent.height, 1,
+        VK_SAMPLE_COUNT_1_BIT,
+        VK_FORMAT_R32G32B32A32_SFLOAT,  // High precision float for accumulation
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        rtAccumulationImage, rtAccumulationImageMemory
+    );
+    
+    rtAccumulationImageView = VulkanHelpers::createImageView(
+        device, rtAccumulationImage, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1
+    );
+    
+    std::cout << "✅ Ray tracing storage images created:" << std::endl;
+    std::cout << "   - RT Output: " << swapChainExtent.width << "x" << swapChainExtent.height << " RGBA8" << std::endl;
+    std::cout << "   - Accumulation: " << swapChainExtent.width << "x" << swapChainExtent.height << " RGBA32F" << std::endl;
 }
 
 // Swapchain Cleanup Implementation
@@ -494,6 +593,33 @@ void ClippyRTXApp::cleanupSwapChain() {
     vkDestroyImage(device, depthImage, nullptr);
     vkFreeMemory(device, depthImageMemory, nullptr);
     
+    // Cleanup ray tracing storage images
+    if (rtOutputImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, rtOutputImageView, nullptr);
+        rtOutputImageView = VK_NULL_HANDLE;
+    }
+    if (rtOutputImage != VK_NULL_HANDLE) {
+        vkDestroyImage(device, rtOutputImage, nullptr);
+        rtOutputImage = VK_NULL_HANDLE;
+    }
+    if (rtOutputImageMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, rtOutputImageMemory, nullptr);
+        rtOutputImageMemory = VK_NULL_HANDLE;
+    }
+    
+    if (rtAccumulationImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, rtAccumulationImageView, nullptr);
+        rtAccumulationImageView = VK_NULL_HANDLE;
+    }
+    if (rtAccumulationImage != VK_NULL_HANDLE) {
+        vkDestroyImage(device, rtAccumulationImage, nullptr);
+        rtAccumulationImage = VK_NULL_HANDLE;
+    }
+    if (rtAccumulationImageMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, rtAccumulationImageMemory, nullptr);
+        rtAccumulationImageMemory = VK_NULL_HANDLE;
+    }
+    
     for (auto framebuffer : swapChainFramebuffers) {
         vkDestroyFramebuffer(device, framebuffer, nullptr);
     }
@@ -504,3 +630,110 @@ void ClippyRTXApp::cleanupSwapChain() {
     
     vkDestroySwapchainKHR(device, swapChain, nullptr);
 }
+
+// Copy RT Output Image to Swapchain for Display (WORKING VERSION!)
+void ClippyRTXApp::copyRTOutputToSwapchain(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+    std::cout << "🖼️ Copying RT output to swapchain image " << imageIndex << std::endl;
+    
+    // Transition RT output image to transfer src layout
+    VkImageMemoryBarrier rtImageBarrier{};
+    rtImageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    rtImageBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    rtImageBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    rtImageBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    rtImageBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    rtImageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    rtImageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    rtImageBarrier.image = rtOutputImage;
+    rtImageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    rtImageBarrier.subresourceRange.baseMipLevel = 0;
+    rtImageBarrier.subresourceRange.levelCount = 1;
+    rtImageBarrier.subresourceRange.baseArrayLayer = 0;
+    rtImageBarrier.subresourceRange.layerCount = 1;
+    
+    // Transition swapchain image to transfer dst layout
+    VkImageMemoryBarrier swapImageBarrier{};
+    swapImageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    swapImageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    swapImageBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    swapImageBarrier.srcAccessMask = 0;
+    swapImageBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    swapImageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    swapImageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    swapImageBarrier.image = swapChainImages[imageIndex];
+    swapImageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    swapImageBarrier.subresourceRange.baseMipLevel = 0;
+    swapImageBarrier.subresourceRange.levelCount = 1;
+    swapImageBarrier.subresourceRange.baseArrayLayer = 0;
+    swapImageBarrier.subresourceRange.layerCount = 1;
+    
+    VkImageMemoryBarrier barriers[] = {rtImageBarrier, swapImageBarrier};
+    
+    vkCmdPipelineBarrier(commandBuffer,
+                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, 0, nullptr, 0, nullptr, 2, barriers);
+    
+    // Copy RT output image to swapchain image
+    VkImageCopy copyRegion{};
+    copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copyRegion.srcSubresource.mipLevel = 0;
+    copyRegion.srcSubresource.baseArrayLayer = 0;
+    copyRegion.srcSubresource.layerCount = 1;
+    copyRegion.srcOffset = {0, 0, 0};
+    
+    copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copyRegion.dstSubresource.mipLevel = 0;
+    copyRegion.dstSubresource.baseArrayLayer = 0;
+    copyRegion.dstSubresource.layerCount = 1;
+    copyRegion.dstOffset = {0, 0, 0};
+    
+    copyRegion.extent.width = swapChainExtent.width;
+    copyRegion.extent.height = swapChainExtent.height;
+    copyRegion.extent.depth = 1;
+    
+    vkCmdCopyImage(commandBuffer,
+                   rtOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   1, &copyRegion);
+    
+    // Transition swapchain image to present layout
+    VkImageMemoryBarrier presentBarrier{};
+    presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    presentBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    presentBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    presentBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    presentBarrier.dstAccessMask = 0;
+    presentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    presentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    presentBarrier.image = swapChainImages[imageIndex];
+    presentBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    presentBarrier.subresourceRange.baseMipLevel = 0;
+    presentBarrier.subresourceRange.levelCount = 1;
+    presentBarrier.subresourceRange.baseArrayLayer = 0;
+    presentBarrier.subresourceRange.layerCount = 1;
+    
+    // Transition RT output image back to general layout for next frame
+    VkImageMemoryBarrier rtBackBarrier{};
+    rtBackBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    rtBackBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    rtBackBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    rtBackBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    rtBackBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    rtBackBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    rtBackBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    rtBackBarrier.image = rtOutputImage;
+    rtBackBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    rtBackBarrier.subresourceRange.baseMipLevel = 0;
+    rtBackBarrier.subresourceRange.levelCount = 1;
+    rtBackBarrier.subresourceRange.baseArrayLayer = 0;
+    rtBackBarrier.subresourceRange.layerCount = 1;
+    
+    VkImageMemoryBarrier finalBarriers[] = {presentBarrier, rtBackBarrier};
+    
+    vkCmdPipelineBarrier(commandBuffer,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                        0, 0, nullptr, 0, nullptr, 2, finalBarriers);
+    
+    std::cout << "✅ RT output copied to swapchain - ready for display!" << std::endl;
+}
+

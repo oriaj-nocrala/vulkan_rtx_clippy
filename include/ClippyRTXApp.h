@@ -43,6 +43,15 @@ private:
     std::vector<VkImageView> swapChainImageViews;
     std::vector<VkFramebuffer> swapChainFramebuffers;
     
+    // Ray Tracing Storage Images
+    VkImage rtOutputImage;
+    VkDeviceMemory rtOutputImageMemory;
+    VkImageView rtOutputImageView;
+    
+    VkImage rtAccumulationImage;
+    VkDeviceMemory rtAccumulationImageMemory;
+    VkImageView rtAccumulationImageView;
+    
     VkRenderPass renderPass;
     VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
@@ -151,6 +160,7 @@ private:
     void createCommandPool();
     void createColorResources();
     void createDepthResources();
+    void createRayTracingStorageImages();
     void createFramebuffers();
     void createVertexBuffer();
     void createIndexBuffer();
@@ -181,6 +191,7 @@ private:
     void drawFrame();
     void updateUniformBuffer(uint32_t currentImage);
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+    void copyRTOutputToSwapchain(VkCommandBuffer commandBuffer, uint32_t imageIndex);
     
     // Swapchain recreation
     void recreateSwapChain();
