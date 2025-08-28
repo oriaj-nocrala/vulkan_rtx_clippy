@@ -264,6 +264,31 @@ void ClippyRTXApp::createFramebuffers() {
     }
 }
 
+void ClippyRTXApp::createUIFramebuffers() {
+    uiFramebuffers.resize(swapChainImageViews.size());
+    
+    for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+        VkImageView attachments[] = {
+            swapChainImageViews[i]  // Direct to swapchain image
+        };
+        
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = uiRenderPass;  // Use UI render pass
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.width = swapChainExtent.width;
+        framebufferInfo.height = swapChainExtent.height;
+        framebufferInfo.layers = 1;
+        
+        if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &uiFramebuffers[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create UI framebuffer!");
+        }
+    }
+    
+    std::cout << "UI overlay framebuffers created (preserves RTX content)" << std::endl;
+}
+
 // Vertex Buffer Implementation
 void ClippyRTXApp::createVertexBuffer() {
     VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
@@ -622,6 +647,21 @@ void ClippyRTXApp::cleanupSwapChain() {
     
     for (auto framebuffer : swapChainFramebuffers) {
         vkDestroyFramebuffer(device, framebuffer, nullptr);
+    }
+    
+    // Cleanup UI framebuffers
+    for (auto framebuffer : uiFramebuffers) {
+        vkDestroyFramebuffer(device, framebuffer, nullptr);
+    }
+    
+    // Cleanup render passes
+    if (uiRenderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device, uiRenderPass, nullptr);
+        uiRenderPass = VK_NULL_HANDLE;
+    }
+    if (renderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device, renderPass, nullptr);
+        renderPass = VK_NULL_HANDLE;
     }
     
     for (auto imageView : swapChainImageViews) {

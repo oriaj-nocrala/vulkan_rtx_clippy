@@ -42,6 +42,7 @@ private:
     VkExtent2D swapChainExtent;
     std::vector<VkImageView> swapChainImageViews;
     std::vector<VkFramebuffer> swapChainFramebuffers;
+    std::vector<VkFramebuffer> uiFramebuffers;  // UI overlay framebuffers
     
     // Ray Tracing Storage Images
     VkImage rtOutputImage;
@@ -53,6 +54,7 @@ private:
     VkImageView rtAccumulationImageView;
     
     VkRenderPass renderPass;
+    VkRenderPass uiRenderPass = VK_NULL_HANDLE;  // Dedicated UI overlay render pass
     VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
@@ -155,6 +157,7 @@ private:
     void createSwapChain();
     void createImageViews();
     void createRenderPass();
+    void createUIRenderPass();
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
     void createCommandPool();
@@ -162,6 +165,7 @@ private:
     void createDepthResources();
     void createRayTracingStorageImages();
     void createFramebuffers();
+    void createUIFramebuffers();
     void createVertexBuffer();
     void createIndexBuffer();
     void createUniformBuffers();

@@ -31,6 +31,13 @@ struct UniformBufferObject {
     alignas(4) float causticsStrength;     // Caustics effect intensity
     alignas(4) float subsurfaceScattering; // SSS strength (0.0 = none, 1.0 = full)
     alignas(4) float subsurfaceRadius;     // SSS penetration distance
+    // 🎭 PERSONALITY SYSTEM PARAMETERS
+    alignas(4) int personalityMode;        // 0=IDLE, 1=EXCITED, 2=QUANTUM, 3=PARTY, 4=HELPING, 5=THINKING
+    alignas(4) float animationStrength;    // Animation intensity multiplier
+    alignas(16) glm::vec3 personalityColorA; // Dynamic color A for personality modes
+    alignas(16) glm::vec3 personalityColorB; // Dynamic color B for personality modes
+    alignas(4) float holographicStrength;  // Holographic scan effect intensity
+    alignas(4) float glitchIntensity;      // Quantum glitch effect strength
 };
 
 // Material PBR para Clippy

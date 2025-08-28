@@ -41,6 +41,13 @@ layout(binding = 3, set = 0) uniform CameraProperties {
     float causticsStrength;     // Caustics effect intensity
     float subsurfaceScattering; // SSS strength (0.0 = none, 1.0 = full)
     float subsurfaceRadius;     // SSS penetration distance
+    // 🎭 PERSONALITY SYSTEM PARAMETERS
+    int personalityMode;        // 0=IDLE, 1=EXCITED, 2=QUANTUM, 3=PARTY, 4=HELPING, 5=THINKING
+    float animationStrength;    // Animation intensity multiplier
+    vec3 personalityColorA;     // Dynamic color A for personality modes
+    vec3 personalityColorB;     // Dynamic color B for personality modes
+    float holographicStrength;  // Holographic scan effect intensity
+    float glitchIntensity;      // Quantum glitch effect strength
 } cam;
 
 void main() {

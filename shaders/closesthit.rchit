@@ -47,6 +47,13 @@ layout(binding = 3, set = 0) uniform CameraProperties {
     float causticsStrength;     // Caustics effect intensity
     float subsurfaceScattering; // SSS strength (0.0 = none, 1.0 = full)
     float subsurfaceRadius;     // SSS penetration distance
+    // 🎭 PERSONALITY SYSTEM PARAMETERS
+    int personalityMode;        // 0=IDLE, 1=EXCITED, 2=QUANTUM, 3=PARTY, 4=HELPING, 5=THINKING
+    float animationStrength;    // Animation intensity multiplier
+    vec3 personalityColorA;     // Dynamic color A for personality modes
+    vec3 personalityColorB;     // Dynamic color B for personality modes
+    float holographicStrength;  // Holographic scan effect intensity
+    float glitchIntensity;      // Quantum glitch effect strength
 } cam;
 
 struct Vertex {
@@ -320,6 +327,95 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     return ggx1 * ggx2;
 }
 
+// 🎭 PERSONALITY SYSTEM FUNCTIONS
+
+// Holographic scan lines effect
+vec3 applyHolographicEffect(vec3 color, vec3 worldPos) {
+    if (cam.holographicStrength <= 0.0) return color;
+    
+    // Moving scan lines
+    float scanLine = sin(worldPos.y * 30.0 - cam.time * 8.0) * 0.5 + 0.5;
+    scanLine = pow(scanLine, 2.0); // Sharper lines
+    
+    // Add holographic blue/cyan tint
+    vec3 holoColor = mix(color, vec3(0.0, 0.8, 1.0), scanLine * cam.holographicStrength * 0.3);
+    
+    // Animated interference patterns
+    float interference = sin(worldPos.x * 50.0 + cam.time * 12.0) * sin(worldPos.z * 50.0 + cam.time * 8.0);
+    interference = interference * 0.5 + 0.5;
+    
+    holoColor += interference * cam.holographicStrength * 0.1;
+    
+    return holoColor;
+}
+
+// Quantum glitch effect
+vec3 applyGlitchEffect(vec3 color, vec3 worldPos) {
+    if (cam.glitchIntensity <= 0.0) return color;
+    
+    // Random glitch displacement
+    uint seed = uint(worldPos.x * 1000.0 + worldPos.y * 2000.0 + worldPos.z * 3000.0 + cam.time * 1000.0);
+    rngState = wang_hash(seed);
+    
+    // Glitch probability
+    if (rnd() < cam.glitchIntensity * 0.1) {
+        // Digital noise pattern
+        float noise = rnd() * 2.0 - 1.0;
+        
+        // Color channel corruption
+        if (rnd() > 0.7) {
+            color.r += noise * cam.glitchIntensity * 0.5;
+        }
+        if (rnd() > 0.7) {
+            color.g += noise * cam.glitchIntensity * 0.5;
+        }
+        if (rnd() > 0.7) {
+            color.b += noise * cam.glitchIntensity * 0.5;
+        }
+        
+        // Quantization effect
+        color = floor(color * 8.0) / 8.0;
+    }
+    
+    return color;
+}
+
+// Dynamic material based on personality mode
+vec3 getPersonalityBaseColor(vec3 worldPos) {
+    vec3 baseColor;
+    
+    // Mix personality colors based on position and time
+    float mixFactor = sin(worldPos.y * 5.0 + cam.time * cam.animationStrength) * 0.5 + 0.5;
+    
+    // Add animation based on personality mode
+    switch (cam.personalityMode) {
+        case 0: // IDLE - gentle wave pattern
+            mixFactor += sin(worldPos.x * 2.0 + cam.time) * 0.1;
+            break;
+        case 1: // EXCITED - rapid pulsing
+            mixFactor += sin(cam.time * 10.0 * cam.animationStrength) * 0.3;
+            break;
+        case 2: // QUANTUM - erratic fluctuations
+            mixFactor += sin(cam.time * 15.0) * cos(worldPos.x * 8.0) * 0.4;
+            break;
+        case 3: // PARTY - rapid rainbow cycling
+            float partyPhase = cam.time * 5.0;
+            mixFactor = sin(partyPhase) * sin(partyPhase + worldPos.y * 10.0) * 0.5 + 0.5;
+            break;
+        case 4: // HELPING - steady breathing pattern
+            mixFactor += sin(cam.time * 2.0) * 0.2;
+            break;
+        case 5: // THINKING - slow contemplative waves
+            mixFactor += sin(cam.time * 0.8 + worldPos.y * 3.0) * 0.15;
+            break;
+    }
+    
+    mixFactor = clamp(mixFactor, 0.0, 1.0);
+    baseColor = mix(cam.personalityColorA, cam.personalityColorB, mixFactor);
+    
+    return baseColor;
+}
+
 void main() {
     // 🔬 PROFESSIONAL PAYLOAD-BASED DEPTH TRACKING
     int currentDepth = payload.depth;
@@ -354,10 +450,41 @@ void main() {
     float roughness; 
     bool isGlass = false;
     
-    // 🥇 ALWAYS GOLD - Remove problematic glass switching for now
-    albedo = vec3(1.0, 0.85, 0.2); // Brighter, more vibrant gold
-    metallic = max(cam.metallic, 0.9); // Force high metallic for gold
-    roughness = clamp(cam.roughness * 0.6, 0.05, 0.3); // Smoother for shinier gold
+    // 🎭 PERSONALITY-BASED DYNAMIC MATERIAL SYSTEM
+    // Get personality-based base color
+    albedo = getPersonalityBaseColor(worldPos);
+    
+    // Adjust material properties based on personality mode
+    switch (cam.personalityMode) {
+        case 0: // IDLE - classic gold material
+            metallic = max(cam.metallic, 0.9);
+            roughness = clamp(cam.roughness * 0.6, 0.05, 0.3);
+            break;
+        case 1: // EXCITED - more reflective
+            metallic = 0.98;
+            roughness = 0.05;
+            break;
+        case 2: // QUANTUM - crystalline properties
+            metallic = 0.8;
+            roughness = 0.15;
+            break;
+        case 3: // PARTY - highly reflective and colorful
+            metallic = 0.99;
+            roughness = 0.02;
+            break;
+        case 4: // HELPING - softer, more approachable
+            metallic = 0.85;
+            roughness = 0.2;
+            break;
+        case 5: // THINKING - matte finish for contemplation
+            metallic = 0.75;
+            roughness = 0.3;
+            break;
+        default:
+            metallic = max(cam.metallic, 0.9);
+            roughness = clamp(cam.roughness * 0.6, 0.05, 0.3);
+            break;
+    }
     
     // Keep glass effects as environmental caustics only
     isGlass = false;
@@ -623,6 +750,10 @@ void main() {
     
     // 🎨 ADD VISUAL DEBUGGING TINTS
     finalColor += depthDebugColor;
+    
+    // 🎭 APPLY PERSONALITY EFFECTS
+    finalColor = applyHolographicEffect(finalColor, worldPos);
+    finalColor = applyGlitchEffect(finalColor, worldPos);
     
     // 🔧 GENTLER TONE MAPPING for brighter gold
     finalColor = finalColor / (finalColor + vec3(1.2)); // Less aggressive tone mapping

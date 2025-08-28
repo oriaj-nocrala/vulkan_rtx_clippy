@@ -83,24 +83,46 @@ void ClippyRTXApp::keyCallback(GLFWwindow* window, int key, int scancode, int ac
                 std::cout << "RTX " << (app->rtxEnabled ? "ON" : "OFF") << std::endl;
                 break;
             case GLFW_KEY_1:
-                app->currentAnimationMode = AnimationMode::EXCITED;
-                std::cout << "Mode: EXCITED" << std::endl;
+                // IDLE - trigger greeting message
+                if (app->clippyUI) {
+                    app->clippyUI->showPersonalityMessage(0);
+                }
+                std::cout << "Clippy: SALUDAR (IDLE)" << std::endl;
                 break;
             case GLFW_KEY_2:
-                app->currentAnimationMode = AnimationMode::HELPING;
-                std::cout << "Mode: HELPING" << std::endl;
+                // EXCITED
+                if (app->clippyUI) {
+                    app->clippyUI->showPersonalityMessage(1);
+                }
+                std::cout << "Clippy: EXCITED" << std::endl;
                 break;
             case GLFW_KEY_3:
-                app->currentAnimationMode = AnimationMode::QUANTUM;
-                std::cout << "Mode: QUANTUM" << std::endl;
+                // QUANTUM
+                if (app->clippyUI) {
+                    app->clippyUI->showPersonalityMessage(2);
+                }
+                std::cout << "Clippy: QUANTUM" << std::endl;
                 break;
             case GLFW_KEY_4:
-                app->currentAnimationMode = AnimationMode::PARTY;
-                std::cout << "Mode: PARTY" << std::endl;
+                // PARTY
+                if (app->clippyUI) {
+                    app->clippyUI->showPersonalityMessage(3);
+                }
+                std::cout << "Clippy: PARTY" << std::endl;
                 break;
             case GLFW_KEY_5:
-                app->currentAnimationMode = AnimationMode::MATRIX;
-                std::cout << "Mode: MATRIX" << std::endl;
+                // HELPING
+                if (app->clippyUI) {
+                    app->clippyUI->showPersonalityMessage(4);
+                }
+                std::cout << "Clippy: HELPING" << std::endl;
+                break;
+            case GLFW_KEY_6:
+                // THINKING
+                if (app->clippyUI) {
+                    app->clippyUI->showPersonalityMessage(5);
+                }
+                std::cout << "Clippy: THINKING" << std::endl;
                 break;
             case GLFW_KEY_R:
                 app->currentAnimationMode = AnimationMode::IDLE;
@@ -189,6 +211,7 @@ void ClippyRTXApp::initVulkan() {
     createSwapChain();
     createImageViews();
     createRenderPass();
+    createUIRenderPass();
     createDescriptorSetLayout();
     createGraphicsPipeline();
     createCommandPool();
@@ -196,6 +219,7 @@ void ClippyRTXApp::initVulkan() {
     createDepthResources();
     createRayTracingStorageImages();
     createFramebuffers();
+    createUIFramebuffers();
     createClippyGeometry();
     createVertexBuffer();
     createIndexBuffer();
@@ -390,6 +414,42 @@ void ClippyRTXApp::drawFrame() {
         // Step 2: Copy RT output image to swapchain image for display
         copyRTOutputToSwapchain(tempCmdBuffer, imageIndex);
         
+        // Step 3: Transition image layout for UI rendering
+        VkImageMemoryBarrier uiLayoutTransition{};
+        uiLayoutTransition.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        uiLayoutTransition.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        uiLayoutTransition.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        uiLayoutTransition.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        uiLayoutTransition.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        uiLayoutTransition.image = swapChainImages[imageIndex];
+        uiLayoutTransition.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        uiLayoutTransition.subresourceRange.baseMipLevel = 0;
+        uiLayoutTransition.subresourceRange.levelCount = 1;
+        uiLayoutTransition.subresourceRange.baseArrayLayer = 0;
+        uiLayoutTransition.subresourceRange.layerCount = 1;
+        uiLayoutTransition.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        uiLayoutTransition.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        
+        vkCmdPipelineBarrier(tempCmdBuffer,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           0, 0, nullptr, 0, nullptr, 1, &uiLayoutTransition);
+        
+        // Step 4: Add render pass for UI overlay on top of RTX (PRESERVE RTX!)
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPass;  // Use main render pass (ImGui compatible)
+        renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];  // Use main framebuffers
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = swapChainExtent;
+        // Use a dummy clear value but the render pass will LOAD content anyway
+        VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+        
+        // RTX path: No UI overlay - pure RTX experience
+        // UI is handled by rasterization path when RTX is disabled
+        
         // End the command buffer for RTX path
         if (vkEndCommandBuffer(tempCmdBuffer) != VK_SUCCESS) {
             throw std::runtime_error("failed to end RTX command buffer!");
@@ -439,6 +499,9 @@ void ClippyRTXApp::drawFrame() {
                                &descriptorSets[currentFrame], 0, nullptr);
         
         vkCmdDrawIndexed(tempCmdBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+        
+        // UI OVERLAY - preserve RTX content
+        renderUI(tempCmdBuffer);
         
         vkCmdEndRenderPass(tempCmdBuffer);
         
@@ -647,6 +710,77 @@ void ClippyRTXApp::updateUniformBuffer(uint32_t currentImage) {
     // 🔆 SUBSURFACE SCATTERING PARAMETERS
     ubo.subsurfaceScattering = 0.4f;  // SSS strength (40% for subtle effect)
     ubo.subsurfaceRadius = 0.8f;      // SSS penetration distance
+    
+    // 🎭 PERSONALITY SYSTEM INITIALIZATION
+    static int personalityMode = 0; // Start in IDLE mode
+    static float modeTimer = 0.0f;
+    modeTimer += 0.016f; // ~60fps timer
+    
+    // Mode switching logic (demo automatic mode changes)
+    if (modeTimer > 8.0f) { // Change mode every 8 seconds for demo
+        personalityMode = (personalityMode + 1) % 6; // Cycle through 6 modes
+        modeTimer = 0.0f;
+    }
+    
+    ubo.personalityMode = personalityMode;
+    
+    // Set personality-specific parameters based on mode
+    switch (personalityMode) {
+        case 0: // IDLE
+            ubo.animationStrength = 1.0f;
+            ubo.personalityColorA = glm::vec3(1.0f, 0.843f, 0.0f); // Gold
+            ubo.personalityColorB = glm::vec3(1.0f, 0.667f, 0.0f); // Orange
+            ubo.holographicStrength = 0.2f;
+            ubo.glitchIntensity = 0.0f;
+            break;
+        case 1: // EXCITED
+            ubo.animationStrength = 3.0f;
+            ubo.personalityColorA = glm::vec3(1.0f, 1.0f, 0.0f);   // Bright yellow
+            ubo.personalityColorB = glm::vec3(1.0f, 0.5f, 0.0f);   // Orange
+            ubo.holographicStrength = 0.8f;
+            ubo.glitchIntensity = 0.1f;
+            break;
+        case 2: // QUANTUM
+            ubo.animationStrength = 2.0f;
+            ubo.personalityColorA = glm::vec3(0.0f, 1.0f, 1.0f);   // Cyan
+            ubo.personalityColorB = glm::vec3(1.0f, 0.0f, 1.0f);   // Magenta
+            ubo.holographicStrength = 1.5f;
+            ubo.glitchIntensity = 0.8f;
+            break;
+        case 3: // PARTY
+            {
+                // Dynamic rainbow colors based on time
+                float hue = fmod(ubo.time * 2.0f, 6.28318f); // 2π for full cycle
+                ubo.personalityColorA = glm::vec3(
+                    0.5f + 0.5f * sin(hue),
+                    0.5f + 0.5f * sin(hue + 2.09f), // 2π/3 offset
+                    0.5f + 0.5f * sin(hue + 4.19f)  // 4π/3 offset
+                );
+                ubo.personalityColorB = glm::vec3(
+                    0.5f + 0.5f * sin(hue + 3.14f), // π offset
+                    0.5f + 0.5f * sin(hue + 5.24f), // 5π/3 offset
+                    0.5f + 0.5f * sin(hue + 1.05f)  // π/3 offset
+                );
+                ubo.animationStrength = 4.0f;
+                ubo.holographicStrength = 2.0f;
+                ubo.glitchIntensity = 0.3f;
+            }
+            break;
+        case 4: // HELPING
+            ubo.animationStrength = 1.5f;
+            ubo.personalityColorA = glm::vec3(0.0f, 1.0f, 0.0f);   // Green
+            ubo.personalityColorB = glm::vec3(0.0f, 0.8f, 1.0f);   // Light blue
+            ubo.holographicStrength = 0.6f;
+            ubo.glitchIntensity = 0.0f;
+            break;
+        case 5: // THINKING
+            ubo.animationStrength = 0.8f;
+            ubo.personalityColorA = glm::vec3(0.5f, 0.0f, 1.0f);   // Purple
+            ubo.personalityColorB = glm::vec3(0.8f, 0.4f, 1.0f);   // Light purple
+            ubo.holographicStrength = 1.0f;
+            ubo.glitchIntensity = 0.05f;
+            break;
+    }
     
     // 🚨 SAFE PARAMETERS - Prevent infinite recursion
     ubo.maxBounces = 2;  // SAFE: 2 bounces maximum to prevent hangs
@@ -1172,6 +1306,52 @@ void ClippyRTXApp::createRenderPass() {
         throw std::runtime_error("failed to create render pass!");
     }
 }
+
+void ClippyRTXApp::createUIRenderPass() {
+    // UI Overlay render pass - preserves existing content
+    VkAttachmentDescription colorAttachment{};
+    colorAttachment.format = swapChainImageFormat;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;  // PRESERVE existing content
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // Ready for ImGui rendering
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    
+    VkAttachmentReference colorAttachmentRef{};
+    colorAttachmentRef.attachment = 0;
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorAttachmentRef;
+    
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = 1;
+    renderPassInfo.pDependencies = &dependency;
+    
+    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &uiRenderPass) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create UI render pass!");
+    }
+    
+    std::cout << "UI overlay render pass created successfully (preserves RTX content)" << std::endl;
+}
+
 // All Vulkan pipeline implementations are now in VulkanPipelineImplementations.cpp
 
 // UI System Implementation
@@ -1179,8 +1359,13 @@ void ClippyRTXApp::setupUI() {
     clippyUI = std::make_unique<ClippyUI>(device, renderPass, descriptorPool, 
                                          swapChainExtent.width, swapChainExtent.height);
     
+    // Initialize ImGui
+    clippyUI->initImGui(window, instance, physicalDevice, graphicsQueue, 
+                       VulkanHelpers::findQueueFamilies(physicalDevice, surface).graphicsFamily.value(), 
+                       static_cast<uint32_t>(swapChainImages.size()));
+    
     // Initialize with welcome message
-    clippyUI->showMessage(ClippyUI::MessageType::GREETING, "¡Hola! Soy Clippy RTX");
+    clippyUI->showMessage(ClippyUI::MessageType::GREETING, "¡Hola! Soy Clippy RTX con personalidad");
 }
 
 void ClippyRTXApp::updateUI() {
