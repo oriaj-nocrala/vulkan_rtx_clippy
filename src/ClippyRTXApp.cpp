@@ -636,9 +636,21 @@ void ClippyRTXApp::updateUniformBuffer(uint32_t currentImage) {
     ubo.isBGRFormat = (swapChainImageFormat == VK_FORMAT_B8G8R8A8_SRGB || 
                        swapChainImageFormat == VK_FORMAT_B8G8R8A8_UNORM) ? 1 : 0;
     
-    // PERFORMANCE: Reduced RTX parameters for Global Illumination
-    ubo.maxBounces = 1;  // REDUCED: Only 1 bounce for performance
-    ubo.samplesPerPixel = 1; // REDUCED: 1 sample per pixel
+    // 🌫️ VOLUMETRIC LIGHTING PARAMETERS
+    ubo.volumetricDensity = 0.1f;   // Base fog density
+    ubo.volumetricScattering = 0.8f; // Light scattering strength
+    
+    // 💎 CAUSTICS & GLASS PARAMETERS
+    ubo.glassRefractionIndex = 1.5f;  // Standard glass IOR
+    ubo.causticsStrength = 0.6f;      // Caustics effect intensity
+    
+    // 🔆 SUBSURFACE SCATTERING PARAMETERS
+    ubo.subsurfaceScattering = 0.4f;  // SSS strength (40% for subtle effect)
+    ubo.subsurfaceRadius = 0.8f;      // SSS penetration distance
+    
+    // 🚨 SAFE PARAMETERS - Prevent infinite recursion
+    ubo.maxBounces = 2;  // SAFE: 2 bounces maximum to prevent hangs
+    ubo.samplesPerPixel = 1; // Keep 1 sample for performance balance
     
     // Dynamic RTX parameters based on animation mode (REDUCED)
     if (currentAnimationMode == AnimationMode::QUANTUM) {

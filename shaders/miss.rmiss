@@ -28,6 +28,19 @@ layout(binding = 3, set = 0) uniform CameraProperties {
     float metallic;
     float roughness;
     int rtxEnabled;
+    vec2 mousePos;
+    vec2 resolution;
+    float glowIntensity;
+    int frameCount;
+    int maxBounces;
+    int samplesPerPixel;
+    int isBGRFormat;
+    float volumetricDensity;   // Fog/atmosphere density
+    float volumetricScattering; // Light scattering strength
+    float glassRefractionIndex; // Glass IOR (1.0 = air, 1.5 = glass)
+    float causticsStrength;     // Caustics effect intensity
+    float subsurfaceScattering; // SSS strength (0.0 = none, 1.0 = full)
+    float subsurfaceRadius;     // SSS penetration distance
 } cam;
 
 void main() {

@@ -41,6 +41,12 @@ layout(binding = 3, set = 0) uniform CameraProperties {
     int maxBounces;
     int samplesPerPixel;
     int isBGRFormat;
+    float volumetricDensity;   // Fog/atmosphere density
+    float volumetricScattering; // Light scattering strength
+    float glassRefractionIndex; // Glass IOR (1.0 = air, 1.5 = glass)
+    float causticsStrength;     // Caustics effect intensity
+    float subsurfaceScattering; // SSS strength (0.0 = none, 1.0 = full)
+    float subsurfaceRadius;     // SSS penetration distance
 } cam;
 
 struct Vertex {
@@ -86,6 +92,186 @@ vec3 cosineWeightedSample(vec3 normal) {
     vec3 v = cross(w, u);
     
     return normalize(u * cos(phi) * sinTheta + v * sin(phi) * sinTheta + w * cosTheta);
+}
+
+// 🌫️ VOLUMETRIC LIGHTING FUNCTIONS
+float henyeyGreenstein(float cosTheta, float g) {
+    float g2 = g * g;
+    return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * cosTheta, 1.5));
+}
+
+vec3 sampleVolumetricScattering(vec3 rayStart, vec3 rayEnd, vec3 lightDir, vec3 lightColor) {
+    const int VOLUMETRIC_SAMPLES = 8; // Quality vs performance
+    
+    vec3 rayStep = (rayEnd - rayStart) / float(VOLUMETRIC_SAMPLES);
+    float stepLength = length(rayStep);
+    vec3 volumetricContribution = vec3(0.0);
+    
+    // Sample along the ray
+    for (int i = 0; i < VOLUMETRIC_SAMPLES; i++) {
+        vec3 samplePos = rayStart + rayStep * (float(i) + rnd());
+        
+        // Distance-based density falloff
+        float distanceFromCamera = length(samplePos - cam.cameraPos);
+        float density = cam.volumetricDensity * exp(-distanceFromCamera * 0.01);
+        
+        if (density > 0.001) {
+            // Phase function for forward/backward scattering
+            vec3 rayDir = normalize(rayEnd - rayStart);
+            float cosTheta = dot(rayDir, lightDir);
+            float phase = henyeyGreenstein(cosTheta, 0.3); // Forward scattering
+            
+            // Height-based fog variation
+            float height = samplePos.y;
+            float heightFactor = exp(-max(0.0, height - 2.0) * 0.5);
+            
+            // Add atmospheric scattering
+            vec3 scattering = lightColor * density * phase * heightFactor * stepLength * cam.volumetricScattering;
+            volumetricContribution += scattering;
+        }
+    }
+    
+    return volumetricContribution;
+}
+
+// 💎 CAUSTICS & REFRACTION FUNCTIONS  
+vec3 customRefract(vec3 I, vec3 N, float eta) {
+    float NdotI = dot(N, I);
+    float k = 1.0 - eta * eta * (1.0 - NdotI * NdotI);
+    if (k < 0.0) {
+        return vec3(0.0); // Total internal reflection
+    }
+    return eta * I - (eta * NdotI + sqrt(k)) * N;
+}
+
+float fresnel(vec3 I, vec3 N, float ior) {
+    float cosI = clamp(-1.0, 1.0, dot(I, N));
+    float etaI = 1.0, etaT = ior;
+    
+    if (cosI > 0.0) {
+        float temp = etaI;
+        etaI = etaT;
+        etaT = temp;
+    }
+    
+    float sinT = etaI / etaT * sqrt(max(0.0, 1.0 - cosI * cosI));
+    
+    if (sinT >= 1.0) {
+        return 1.0; // Total internal reflection
+    }
+    
+    float cosT = sqrt(max(0.0, 1.0 - sinT * sinT));
+    cosI = abs(cosI);
+    
+    float Rs = ((etaT * cosI) - (etaI * cosT)) / ((etaT * cosI) + (etaI * cosT));
+    float Rp = ((etaI * cosI) - (etaT * cosT)) / ((etaI * cosI) + (etaT * cosT));
+    
+    return (Rs * Rs + Rp * Rp) / 2.0;
+}
+
+// Chromatic dispersion - separate RGB wavelengths
+vec3 getChromaticRefraction(vec3 rayDir, vec3 normal, float baseIOR) {
+    // Different IOR for different wavelengths (chromatic dispersion)
+    float iorRed = baseIOR - 0.02;   // Red bends less
+    float iorGreen = baseIOR;        // Green is baseline
+    float iorBlue = baseIOR + 0.03;  // Blue bends more
+    
+    vec3 refractedRed = customRefract(rayDir, normal, 1.0 / iorRed);
+    vec3 refractedGreen = customRefract(rayDir, normal, 1.0 / iorGreen);
+    vec3 refractedBlue = customRefract(rayDir, normal, 1.0 / iorBlue);
+    
+    return vec3(
+        length(refractedRed) > 0.0 ? 1.0 : 0.0,
+        length(refractedGreen) > 0.0 ? 1.0 : 0.0,
+        length(refractedBlue) > 0.0 ? 1.0 : 0.0
+    );
+}
+
+vec3 traceCausticRay(vec3 origin, vec3 direction, vec3 lightDir, float ior) {
+    // Simplified caustic calculation - trace refracted light ray
+    vec3 causticColor = vec3(0.0);
+    
+    // Sample caustic pattern based on refraction angles
+    float causticPattern = sin(origin.x * 10.0) * cos(origin.z * 8.0) * sin(cam.time * 2.0);
+    causticPattern = max(0.0, causticPattern);
+    
+    // Create rainbow caustics
+    float wavelength = dot(direction, lightDir) * 0.5 + 0.5;
+    vec3 rainbow = vec3(
+        sin(wavelength * PI * 2.0 + 0.0) * 0.5 + 0.5,
+        sin(wavelength * PI * 2.0 + 2.09) * 0.5 + 0.5,
+        sin(wavelength * PI * 2.0 + 4.19) * 0.5 + 0.5
+    );
+    
+    return rainbow * causticPattern * cam.causticsStrength;
+}
+
+// 🔆 SUBSURFACE SCATTERING FUNCTIONS
+vec3 calculateSSS(vec3 worldPos, vec3 normal, vec3 lightDir, vec3 viewDir, vec3 albedo) {
+    if (cam.subsurfaceScattering <= 0.0) {
+        return vec3(0.0);
+    }
+    
+    // Calculate subsurface scattering using Burley's normalized diffusion
+    float NdotL = dot(normal, lightDir);
+    float NdotV = dot(normal, viewDir);
+    
+    // Light penetration - how much light enters the surface
+    float penetration = 1.0 - abs(NdotL);
+    penetration = pow(penetration, 2.0); // Sharper falloff
+    
+    // Subsurface phase function - simulates internal scattering
+    vec3 H = normalize(lightDir + viewDir);
+    float VdotH = dot(viewDir, H);
+    float subsurfacePhase = pow(max(0.0, VdotH), 4.0);
+    
+    // Distance-based absorption - deeper penetration = more absorption
+    float absorptionDistance = cam.subsurfaceRadius;
+    vec3 absorptionCoeff = vec3(0.8, 0.4, 0.2); // Red penetrates more than blue
+    vec3 transmission = exp(-absorptionCoeff * absorptionDistance);
+    
+    // Fresnel for subsurface - less scattering at grazing angles  
+    float fresnel = pow(1.0 - max(0.0, NdotV), 5.0);
+    float subsurfaceFresnel = 1.0 - fresnel;
+    
+    // Combine all SSS factors
+    vec3 sssContribution = albedo * transmission * penetration * subsurfacePhase * subsurfaceFresnel;
+    
+    return sssContribution * cam.subsurfaceScattering;
+}
+
+// Enhanced SSS with multiple samples for better quality
+vec3 calculateAdvancedSSS(vec3 worldPos, vec3 normal, vec3 lightDir, vec3 viewDir, vec3 albedo) {
+    if (cam.subsurfaceScattering <= 0.0) {
+        return vec3(0.0);
+    }
+    
+    const int SSS_SAMPLES = 4;
+    vec3 sssAccumulation = vec3(0.0);
+    
+    // Sample different penetration depths
+    for (int i = 0; i < SSS_SAMPLES; i++) {
+        float depth = (float(i) + 1.0) / float(SSS_SAMPLES);
+        float penetrationDistance = cam.subsurfaceRadius * depth;
+        
+        // Different absorption for each depth layer
+        vec3 layerAbsorption = vec3(
+            exp(-penetrationDistance * 0.3), // Red - least absorbed
+            exp(-penetrationDistance * 0.6), // Green - medium absorbed  
+            exp(-penetrationDistance * 1.0)  // Blue - most absorbed
+        );
+        
+        // Light scattering at this depth
+        float scatteringFactor = exp(-depth * 2.0); // Exponential falloff
+        
+        // Back-scattering effect - light bouncing back out
+        float backScatter = max(0.0, -dot(normal, lightDir)) * (1.0 - depth * 0.5);
+        
+        vec3 layerContribution = albedo * layerAbsorption * scatteringFactor * (1.0 + backScatter);
+        sssAccumulation += layerContribution;
+    }
+    
+    return sssAccumulation * cam.subsurfaceScattering * 0.25; // Normalize by sample count
 }
 
 // Aliases for consistent naming
@@ -162,10 +348,20 @@ void main() {
     // Simple surface normal - opposite of ray direction with slight variation
     vec3 surfaceNormal = normalize(-rayDir + vec3(sin(worldPos.x * 2.0), cos(worldPos.y * 2.0), sin(worldPos.z * 2.0)) * 0.1);
     
-    // PBR Material Properties - BRIGHT VIBRANT GOLD
-    vec3 albedo = vec3(1.0, 0.85, 0.2); // Brighter, more vibrant gold
-    float metallic = max(cam.metallic, 0.9); // Force high metallic for gold
-    float roughness = clamp(cam.roughness * 0.6, 0.05, 0.3); // Smoother for shinier gold
+    // 💎 DYNAMIC MATERIAL SYSTEM - Switch between Gold and Glass
+    vec3 albedo;
+    float metallic;
+    float roughness; 
+    bool isGlass = false;
+    
+    // 🥇 ALWAYS GOLD - Remove problematic glass switching for now
+    albedo = vec3(1.0, 0.85, 0.2); // Brighter, more vibrant gold
+    metallic = max(cam.metallic, 0.9); // Force high metallic for gold
+    roughness = clamp(cam.roughness * 0.6, 0.05, 0.3); // Smoother for shinier gold
+    
+    // Keep glass effects as environmental caustics only
+    isGlass = false;
+    
     vec3 F0 = mix(vec3(0.04), albedo, metallic); // Fresnel reflectance
     
     // Lighting vectors
@@ -211,59 +407,61 @@ void main() {
         // Combine diffuse and specular
         vec3 lightColor = vec3(3.5, 3.0, 2.5); // BRIGHTER warm sun light for gold
         finalColor = (kD * albedo / PI + specular) * lightColor * NdotL;
+        
+        // 🔆 ADD SUBSURFACE SCATTERING
+        if (cam.subsurfaceScattering > 0.0) {
+            vec3 sssContribution = calculateAdvancedSSS(worldPos, surfaceNormal, lightDir, viewDir, albedo);
+            finalColor += sssContribution * lightColor;
+        }
     }
     
-    // 🚀 PROFESSIONAL RECURSIVE GLOBAL ILLUMINATION WITH PAYLOAD TRACKING
+    // ✨ ENHANCED MULTI-BOUNCE RAY-TRACED REFLECTIONS
     
     vec3 reflectionContrib = vec3(0.0);
     
-    // Only trace reflection rays if we haven't reached max depth
+    // Enhanced reflection tracing with multiple bounce control
     if (metallic > 0.1 && currentDepth < cam.maxBounces) {
+        
+        // 🚨 SIMPLIFIED - Single reflection ray to prevent complexity issues
         vec3 reflectDir = reflect(rayDir, surfaceNormal);
-        
-        // 🔧 PROFESSIONAL PAYLOAD SETUP FOR NEXT RAY
-        reflectionPayload.color = vec3(0.0);
-        reflectionPayload.depth = currentDepth + 1;      // INCREMENT DEPTH  
-        reflectionPayload.rayType = 1;                   // Reflection ray
-        reflectionPayload.throughput = payload.throughput * metallic;  // Energy conservation
-        reflectionPayload.flags = payload.flags;         // Preserve debug flags
-        
-        // 🎯 DISPATCH REFLECTION RAY WITH PROPER PAYLOAD
-        traceRayEXT(topLevelAS,
-                   gl_RayFlagsOpaqueEXT,
-                   0xff,           // Cull mask
-                   0,              // SBT record offset (same shader)
-                   0,              // SBT record stride  
-                   0,              // Miss index
-                   worldPos + surfaceNormal * 0.001,   // Origin with offset
-                   0.001,          // tMin
-                   reflectDir,     // Direction
-                   100.0,          // tMax
-                   1);             // Payload location 1
-        
-        // 🔬 ADVANCED RESULT VALIDATION
-        vec3 reflectionResult = reflectionPayload.color;
-        if (!any(isnan(reflectionResult)) && !any(isinf(reflectionResult)) &&
-            any(greaterThan(reflectionResult, vec3(0.0))) &&
-            all(lessThan(reflectionResult, vec3(10.0)))) {
             
-            // PROFESSIONAL ENERGY CONSERVATION
-            float depthFalloff = 1.0 / (1.0 + float(currentDepth) * 0.3);
-            float fresnel = pow(1.0 - max(0.0, dot(-rayDir, surfaceNormal)), 2.0);
-            reflectionContrib = reflectionResult * metallic * fresnel * depthFalloff * 0.4;
+            // 🔧 ENHANCED PAYLOAD SETUP FOR REFLECTION RAY
+            reflectionPayload.color = vec3(0.0);
+            reflectionPayload.depth = currentDepth + 1;      // INCREMENT DEPTH  
+            reflectionPayload.rayType = 1;                   // Reflection ray
+            reflectionPayload.throughput = payload.throughput * metallic;  // Energy conservation
+            reflectionPayload.flags = payload.flags;         // Preserve debug flags
             
-        } else if (any(isnan(reflectionResult))) {
-            // DIAGNOSTIC: NaN detected
-            reflectionContrib = vec3(1.0, 0.0, 1.0) * 0.05; // Magenta debug
-        } else if (any(isinf(reflectionResult))) {
-            // DIAGNOSTIC: Infinity detected  
-            reflectionContrib = vec3(1.0, 1.0, 0.0) * 0.05; // Yellow debug
-        } else {
-            // SAFE PROCEDURAL FALLBACK
-            float skyFactor = max(0.0, dot(reflectDir, vec3(0.0, 1.0, 0.0)));
-            vec3 proceduralReflection = mix(vec3(0.1, 0.15, 0.3), vec3(0.3, 0.5, 0.8), skyFactor);
-            reflectionContrib = proceduralReflection * metallic * 0.15;
-        }
+            // 🎯 DISPATCH ENHANCED REFLECTION RAY
+            traceRayEXT(topLevelAS,
+                       gl_RayFlagsOpaqueEXT,
+                       0xff,           // Cull mask
+                       0,              // SBT record offset (same shader)
+                       0,              // SBT record stride  
+                       0,              // Miss index
+                       worldPos + surfaceNormal * 0.001,   // Origin with offset
+                       0.001,          // tMin
+                       reflectDir,     // Direction
+                       100.0,          // tMax
+                       1);             // Payload location 1
+            
+            // 🔬 ADVANCED RESULT VALIDATION & PROCESSING
+            vec3 reflectionResult = reflectionPayload.color;
+            if (!any(isnan(reflectionResult)) && !any(isinf(reflectionResult)) &&
+                any(greaterThan(reflectionResult, vec3(0.0))) &&
+                all(lessThan(reflectionResult, vec3(10.0)))) {
+                
+                // 🚨 SAFE REFLECTION CALCULATION
+                float depthFalloff = 1.0 / (1.0 + float(currentDepth) * 0.5); // Stronger falloff
+                float fresnel = pow(1.0 - max(0.0, dot(-rayDir, surfaceNormal)), 2.0); // Standard fresnel
+                reflectionContrib = reflectionResult * metallic * fresnel * depthFalloff * 0.3;
+                
+            } else {
+                // SAFE PROCEDURAL FALLBACK
+                float skyFactor = max(0.0, dot(reflectDir, vec3(0.0, 1.0, 0.0)));
+                vec3 proceduralReflection = mix(vec3(0.1, 0.15, 0.3), vec3(0.3, 0.5, 0.8), skyFactor);
+                reflectionContrib = proceduralReflection * metallic * 0.15;
+            }
     }
     
     // Add GOLDEN ambient light - never fully black
@@ -337,6 +535,84 @@ void main() {
     }
     
     finalColor += giContrib;
+    
+    // 💎 CAUSTICS & REFRACTION EFFECTS
+    vec3 causticsContrib = vec3(0.0);
+    vec3 refractionContrib = vec3(0.0);
+    
+    if (isGlass && currentDepth < cam.maxBounces - 1) {
+        // 🌈 CHROMATIC DISPERSION - Separate wavelengths
+        vec3 chromaticMask = getChromaticRefraction(rayDir, surfaceNormal, cam.glassRefractionIndex);
+        
+        // Calculate fresnel for glass
+        float fresnelFactor = fresnel(rayDir, surfaceNormal, cam.glassRefractionIndex);
+        
+        // Trace refraction ray with chromatic dispersion
+        vec3 refractionDir = customRefract(rayDir, surfaceNormal, 1.0 / cam.glassRefractionIndex);
+        
+        if (length(refractionDir) > 0.001) {
+            // Setup refraction payload
+            reflectionPayload.color = vec3(0.0);
+            reflectionPayload.depth = currentDepth + 1;
+            reflectionPayload.rayType = 4; // Refraction ray
+            reflectionPayload.throughput = payload.throughput * (1.0 - fresnelFactor);
+            reflectionPayload.flags = payload.flags;
+            
+            // Trace refraction ray
+            traceRayEXT(topLevelAS,
+                       gl_RayFlagsOpaqueEXT,
+                       0xff,
+                       0, 0, 0,
+                       worldPos - surfaceNormal * 0.001, // Offset inward
+                       0.001,
+                       refractionDir,
+                       100.0,
+                       1); // Use same payload location as reflection
+            
+            // Apply chromatic dispersion to refracted light
+            vec3 refractedColor = reflectionPayload.color;
+            refractionContrib = refractedColor * chromaticMask * (1.0 - fresnelFactor);
+            
+            // Add caustic patterns
+            causticsContrib = traceCausticRay(worldPos, refractionDir, lightDir, cam.glassRefractionIndex);
+        }
+        
+        // For glass, reduce direct lighting and add transmission
+        finalColor = finalColor * fresnelFactor + refractionContrib + causticsContrib;
+        
+        // Glass specific ambient - more transparent
+        finalColor += albedo * vec3(0.1, 0.15, 0.2) * 0.2;
+        
+    }
+    
+    // 🌈 ADD ENVIRONMENTAL CAUSTICS FOR ALL MATERIALS
+    if (cam.causticsStrength > 0.0) {
+        vec3 ambientCaustics = traceCausticRay(worldPos, reflect(rayDir, surfaceNormal), lightDir, 1.5);
+        causticsContrib += ambientCaustics * 0.2; // Environmental caustics for atmosphere
+    }
+    
+    finalColor += causticsContrib;
+    
+    // 🌫️ VOLUMETRIC LIGHTING - GOD RAYS & ATMOSPHERIC SCATTERING
+    vec3 volumetricContrib = vec3(0.0);
+    
+    if (cam.volumetricDensity > 0.0 && currentDepth == 0) { // Only for primary rays
+        // Sample volumetric scattering along the ray path
+        vec3 rayStart = gl_WorldRayOriginEXT;
+        vec3 rayEnd = worldPos;
+        vec3 lightColor = vec3(3.5, 3.0, 2.5); // Match main light color
+        
+        volumetricContrib = sampleVolumetricScattering(rayStart, rayEnd, lightDir, lightColor);
+        
+        // Add atmospheric perspective - objects fade to sky color with distance
+        float rayDistance = length(rayEnd - rayStart);
+        float atmosphericFactor = 1.0 - exp(-rayDistance * cam.volumetricDensity * 0.05);
+        vec3 atmosphericColor = vec3(0.5, 0.7, 1.0); // Sky tint
+        
+        finalColor = mix(finalColor, atmosphericColor, atmosphericFactor * 0.3);
+    }
+    
+    finalColor += volumetricContrib;
     
     // Add GOLDEN emissive glow for Clippy magic
     vec3 emissive = albedo * 0.15 * (1.0 + sin(cam.time * 3.0) * 0.3); // Stronger glow

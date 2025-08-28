@@ -25,6 +25,12 @@ struct UniformBufferObject {
     alignas(4) int maxBounces;
     alignas(4) int samplesPerPixel;
     alignas(4) int isBGRFormat; // 1 if BGR format, 0 if RGB
+    alignas(4) float volumetricDensity;   // Fog/atmosphere density
+    alignas(4) float volumetricScattering; // Light scattering strength
+    alignas(4) float glassRefractionIndex; // Glass IOR (1.0 = air, 1.5 = glass)
+    alignas(4) float causticsStrength;     // Caustics effect intensity
+    alignas(4) float subsurfaceScattering; // SSS strength (0.0 = none, 1.0 = full)
+    alignas(4) float subsurfaceRadius;     // SSS penetration distance
 };
 
 // Material PBR para Clippy
